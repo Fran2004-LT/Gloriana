@@ -36,7 +36,7 @@ async function handleRace(interaction) {
       const position = interaction.options.getString('position');
       const useHill  = interaction.options.getBoolean('hillclear') || false;
       const session  = getSession(guildId);
-      const inv      = getInventory(interaction.user.id);
+      const inv      = await getInventory(interaction.user.id);
       const statusMsgs = [];
 
       let hillCleared = false;
@@ -58,7 +58,7 @@ async function handleRace(interaction) {
         position, { hillCleared }
       );
 
-      if (session.grade === 'Debut') addItem(interaction.user.id, 'raceSafe', 3);
+      if (session.grade === 'Debut') await addItem(interaction.user.id, 'raceSafe', 3);
 
       const extra = statusMsgs.length ? `\n${statusMsgs.join('\n')}` : '';
       await interaction.reply(
@@ -119,7 +119,7 @@ async function handleRace(interaction) {
         const lb      = getLeaderboard(guildId);
         const session = getSession(guildId);
         const board   = lb.map(p => `${p.rank}. **${p.displayName}** [${p.position}] — ${p.score} แต้ม`).join('\n');
-        if (lb.length > 0) recordWin(lb[0].userId, session.grade);
+        if (lb.length > 0) await recordWin(lb[0].userId, session.grade);
         await interaction.reply(`🏁 **การแข่งจบแล้ว!**\n\n🏆 **ผลการแข่ง**\n\n${board}`);
       } else {
         const session = getSession(guildId);
@@ -186,7 +186,7 @@ async function handleRace(interaction) {
       const type       = interaction.options.getString('type');
       const amount     = interaction.options.getInteger('amount');
       const targetName = interaction.guild?.members.cache.get(target.id)?.displayName || target.username;
-      addItem(target.id, type, amount);
+      await addItem(target.id, type, amount);
       const inv   = getInventory(target.id);
       const names = { 'reroll.main': 'Main', 'reroll.oneUse': 'One-use', 'raceSafe': 'Race Safe' };
       await interaction.reply(

@@ -71,7 +71,7 @@ async function handleDaily(interaction) {
 // ============================
 async function handleInventory(interaction) {
   const name = interaction.member?.displayName || interaction.user.username;
-  const inv  = getInventory(interaction.user.id);
+  const inv  = await getInventory(interaction.user.id);
   await interaction.reply({ content: buildInventoryText(name, inv), ephemeral: false });
 }
 
@@ -91,8 +91,8 @@ async function handleInspect(interaction) {
 async function handleSetRole(interaction) {
   const role = interaction.options.getString('role');
   const name = interaction.member?.displayName || interaction.user.username;
-  if (role === 'both') { setRole(interaction.user.id, 'uma'); setRole(interaction.user.id, 'trainer'); }
-  else setRole(interaction.user.id, role);
+  if (role === 'both') { await setRole(interaction.user.id, 'uma'); await setRole(interaction.user.id, 'trainer'); }
+  else await setRole(interaction.user.id, role);
   const roleLabel = { uma: '🏇 สาวม้า', trainer: '👤 เทรนเนอร์', both: '🏇👤 ทั้งคู่' };
   await interaction.reply(`✅ **${name}** ตั้ง role เป็น ${roleLabel[role]} แล้ว`);
 }
@@ -113,7 +113,7 @@ async function handleGive(interaction) {
     for (const t of targets) addItem(t.id, type, amount);
 
     if (targets.length === 1) {
-      const inv = getInventory(targets[0].id);
+      const inv = await getInventory(targets[0].id);
       await interaction.reply(
         `✅ **${staffName}** ให้ ${names[type]} +${amount.toLocaleString()} แก่ **${targets[0].displayName}**\n` +
         `💰 ${inv.gold.toLocaleString()} | 🌈 ${inv.rc.toLocaleString()}`
@@ -153,7 +153,7 @@ async function handleGift(interaction) {
     const amountStr = type !== 'hillClearItem' && type !== 'zoneUnlock' ? ` ×${amount}` : '';
 
     if (targets.length === 1) {
-      const inv = getInventory(targets[0].id);
+      const inv = await getInventory(targets[0].id);
       const summary = `🔁 ${inv.reroll.main} | ⚡ ${inv.reroll.oneUse} | 🎯 ${inv.reroll.trainer} | 🛡️ ${inv.raceSafe} | 🏔️ ${inv.hillClearItem ? 'มี' : 'ไม่มี'} | 🌀 ${inv.zoneUnlocked ? 'Unlocked' : 'Locked'}`;
       await interaction.reply(
         `🎁 **${staffName}** มอบ **${itemLabel}${amountStr}** ให้ **${targets[0].displayName}**\n${summary}`
@@ -185,7 +185,7 @@ async function handleTransfer(interaction) {
     if (fromInv.gold < amount) throw new Error(`Gold ไม่พอ (มี ${fromInv.gold.toLocaleString()})`);
 
     fromInv.gold -= amount;
-    addItem(target.id, 'gold', amount);
+    await addItem(target.id, 'gold', amount);
     const toInv = getInventory(target.id);
 
     await interaction.reply(

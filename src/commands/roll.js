@@ -145,7 +145,7 @@ async function handleRerollSelect(interaction) {
   }
 
   const names = { main: 'Main', oneUse: 'One-use', raceSafe: 'Race Safe' };
-  const inv   = getInventory(interaction.user.id);
+  const inv   = await getInventory(interaction.user.id);
   const count = type === 'main' ? inv.reroll.main : type === 'oneUse' ? inv.reroll.oneUse : inv.raceSafe;
 
   if (type !== 'main' && count <= 0) {
@@ -181,7 +181,7 @@ async function handleDoReroll(interaction) {
 
   try {
     const itemMap = { main: 'reroll.main', oneUse: 'reroll.oneUse', raceSafe: 'raceSafe' };
-    useItem(interaction.user.id, itemMap[type] || type);
+    await useItem(interaction.user.id, itemMap[type] || type);
 
     const result = roll(notation);
     let scoreMsg = '';
@@ -283,7 +283,7 @@ async function handleDebuff(interaction) {
     if (!last) throw new Error('ไม่พบผลล่าสุดของ target');
 
     // ใช้ Main Reroll
-    useItem(interaction.user.id, 'reroll.main');
+    await useItem(interaction.user.id, 'reroll.main');
 
     // คะแนนก่อนทอยรอบนี้ = score - lastTotal
     const scoreBefore = Math.max(0, player.score - last.total);
@@ -360,7 +360,7 @@ async function handleTrainerReroll(interaction) {
   const trainerName = interaction.member?.displayName || interaction.user.username;
 
   try {
-    useItem(interaction.user.id, 'reroll.trainer');
+    await useItem(interaction.user.id, 'reroll.trainer');
     const { player, newResult, oldResult } = trainerReroll(guildId, target.id, roll);
     await interaction.reply(
       `🎯 **${trainerName}** ใช้ Trainer Reroll ให้ **${targetName}**\n` +

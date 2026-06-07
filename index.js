@@ -1,6 +1,7 @@
 'use strict';
 
 require('dotenv').config();
+const { initDB } = require('./src/db');
 
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 
@@ -176,6 +177,7 @@ const commands = [
 // ============================
 client.once('clientReady', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
+  await initDB();
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
     await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
