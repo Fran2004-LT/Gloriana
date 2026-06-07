@@ -286,7 +286,8 @@ async function handleDebuff(interaction) {
     await useItem(interaction.user.id, 'reroll.main');
     const updatedInv = await getInventory(interaction.user.id);
     const selfPlayerSession = getSession(guildId).players.get(interaction.user.id);
-    if (selfPlayerSession && updatedInv.reroll.main <= 1) selfPlayerSession.mainRerollCooldown = true;
+    // set cooldown เสมอหลังใช้ debuff จนกว่าแข่งจบ
+    if (selfPlayerSession) selfPlayerSession.mainRerollCooldown = true;
 
     // คะแนนก่อนทอยรอบนี้ = score - lastTotal
     const scoreBefore = Math.max(0, player.score - last.total);
