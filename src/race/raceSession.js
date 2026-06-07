@@ -156,6 +156,8 @@ function next(guildId) {
 
   // จบการแข่ง
   if (session.totalTurn >= session.distance) {
+    // reset main reroll cooldown ทุกคนตอนแข่งจบ
+    for (const p of session.players.values()) p.mainRerollCooldown = false;
     session.status = 'finished';
     return { type: 'finished', phase: session.phase, turn: session.turn, totalTurn: session.totalTurn };
   }

@@ -269,8 +269,8 @@ async function handleDebuff(interaction) {
 
   try {
     // เช็ค Main Reroll ก่อนใช้
-    const inv = getInventory(interaction.user.id);
-    if (inv.reroll.main <= 0) throw new Error('ไม่มี Main Reroll เหลือแล้ว');
+    const inv = await getInventory(interaction.user.id);
+    if (inv.reroll.main <= 1) throw new Error('ไม่มี Main Reroll เหลือแล้ว');
 
     if (!hasSession(guildId)) throw new Error('ไม่มี session การแข่งอยู่');
     const session = getSession(guildId);
@@ -282,8 +282,11 @@ async function handleDebuff(interaction) {
     const last = getLastRoll(guildId, target.id);
     if (!last) throw new Error('ไม่พบผลล่าสุดของ target');
 
-    // ใช้ Main Reroll
+    // ใช้ Main Reroll + set cooldown ถ้า main เหลือ 1
     await useItem(interaction.user.id, 'reroll.main');
+    const updatedInv = await getInventory(interaction.user.id);
+    const selfPlayerSession = getSession(guildId).players.get(interaction.user.id);
+    if (selfPlayerSession && updatedInv.reroll.main <= 1) selfPlayerSession.mainRerollCooldown = true;
 
     // คะแนนก่อนทอยรอบนี้ = score - lastTotal
     const scoreBefore = Math.max(0, player.score - last.total);

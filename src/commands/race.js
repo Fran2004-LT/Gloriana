@@ -151,6 +151,11 @@ async function handleRace(interaction) {
     }
 
     if (sub === 'close') {
+      // reset mainRerollCooldown ก่อน close
+      try {
+        const s = getSession(guildId);
+        for (const p of s.players.values()) p.mainRerollCooldown = false;
+      } catch {}
       closeSession(guildId);
       await interaction.reply(`🔒 ปิด Session แล้ว`);
     }
