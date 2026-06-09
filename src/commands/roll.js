@@ -7,15 +7,12 @@ const { getHillDebuff }     = require('../config/tracks');
 const { getInventory, useItem } = require('../inventory/inventoryStore');
 const {
   submitScore, getSession, hasSession, getTurnSnapshot,
-  trainerReroll, getLastRoll,
+  trainerReroll, getLastRoll, setLastRoll,
 } = require('../race/raceSession');
 
 // Staff/Assistant role IDs
 const ALLOWED_ROLES = ['1441679665893740614', '1506298098224332850'];
 
-// ============================
-// Role check helper
-// ============================
 function hasAllowedRole(member) {
   if (!member) return false;
   return ALLOWED_ROLES.some(id => member.roles.cache.has(id));
@@ -192,6 +189,7 @@ async function handleDoReroll(interaction) {
       try {
         const s = getSession(guildId);
         grade = s.grade;
+        // replace=true → ใช้ snapshot ต้นเทิร์นเป็น base (แก้ใน submitScore แล้ว)
         const { player, canSafe: cs } = submitScore(guildId, interaction.user.id, result, true, true);
         scoreMsg = `\n📊 คะแนนสะสม: **${player.score}**`;
         canSafe  = cs;
@@ -253,7 +251,6 @@ async function handleSafe(interaction) {
 
 // ============================
 // Debuff skill (สกิลแดง)
-// บอท reroll อัตโนมัติเลย ไม่ต้องให้เขาทอยเอง
 // ============================
 async function handleDebuff(interaction) {
   const guildId    = interaction.guildId;
@@ -261,7 +258,6 @@ async function handleDebuff(interaction) {
   const targetName = interaction.guild?.members.cache.get(target.id)?.displayName || target.username;
   const userName   = interaction.member?.displayName || interaction.user.username;
 
-  // เช็คยิงตัวเองไม่ได้
   if (target.id === interaction.user.id) {
     await interaction.reply({ content: '❌ ไม่สามารถใช้สกิลแดงกับตัวเองได้', ephemeral: true });
     return;
@@ -271,7 +267,6 @@ async function handleDebuff(interaction) {
     if (!hasSession(guildId)) throw new Error('ไม่มี session การแข่งอยู่');
     const session = getSession(guildId);
 
-    // เช็ค cooldown ของผู้ใช้
     const selfPlayer = session.players.get(interaction.user.id);
     if (selfPlayer?.mainRerollCooldown === true) throw new Error('Main Reroll อยู่ใน Cooldown — รอแข่งจบ');
 
@@ -279,28 +274,21 @@ async function handleDebuff(interaction) {
     if (!player) throw new Error('ผู้เล่นเป้าหมายไม่ได้อยู่ใน session นี้');
     if (!player.rolled) throw new Error(`**${targetName}** ยังไม่ได้ทอยในเทิร์นนี้`);
 
-    // ดึงผลล่าสุดของ target เพื่อรู้ notation
     const last = getLastRoll(guildId, target.id);
     if (!last) throw new Error('ไม่พบผลล่าสุดของ target');
 
-    // ใช้ Main Reroll
     await useItem(interaction.user.id, 'reroll.main');
 
-    // set cooldown เสมอหลังใช้ debuff จนกว่าแข่งจบ
     if (selfPlayer) selfPlayer.mainRerollCooldown = true;
 
-    // คะแนนก่อนทอยรอบนี้ = score - lastTotal
-    const scoreBefore = Math.max(0, player.score - last.total);
+    // ใช้ turnSnapshot เป็น base แทนการคำนวณ score - last.total
+    // เพราะ snapshot คือคะแนน ณ ต้นเทิร์น ก่อนที่จะทอยเทิร์นนี้
+    const snapshot = session.turnSnapshot.get(target.id) ?? 0;
 
-    // บอท reroll ให้เลยอัตโนมัติ
     const newResult = roll(last.notation);
+    player.score    = snapshot + newResult.total;
 
-    // คำนวณคะแนนใหม่
-    player.score = scoreBefore + newResult.total;
-
-    // update lastRoll
-    const { setLastRoll } = require('../race/raceSession');
-    if (setLastRoll) setLastRoll(guildId, target.id, newResult);
+    setLastRoll(guildId, target.id, newResult);
 
     await interaction.reply(
       `🔴 **${userName}** ใช้สกิลแดงใส่ **${targetName}**!\n` +
@@ -313,7 +301,6 @@ async function handleDebuff(interaction) {
 
 // ============================
 // All Out
-// reroll ใหม่ หักแต้ม -10n (n = ครั้งที่ใช้สะสมในแข่งนี้)
 // ============================
 async function handleAllOut(interaction) {
   const guildId = interaction.guildId;
@@ -330,19 +317,18 @@ async function handleAllOut(interaction) {
     const last = getLastRoll(guildId, userId);
     if (!last) throw new Error('ไม่พบผลล่าสุด');
 
-    // เพิ่ม all out count
     player.allOutCount = (player.allOutCount || 0) + 1;
     const n       = player.allOutCount;
     const penalty = n * 10;
 
-    // คะแนนก่อนทอยรอบนี้
-    const scoreBefore = Math.max(0, player.score - last.total);
+    // ใช้ turnSnapshot เป็น base เหมือน debuff
+    const snapshot = session.turnSnapshot.get(userId) ?? 0;
 
-    // reroll ใหม่
     const newResult = roll(last.notation);
     const newTotal  = Math.max(0, newResult.total - penalty);
+    player.score    = snapshot + newTotal;
 
-    player.score = scoreBefore + newTotal;
+    setLastRoll(guildId, userId, newResult);
 
     await interaction.reply(
       `💥 **${name}** ใช้ **All Out** (ครั้งที่ ${n})\n` +

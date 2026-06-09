@@ -9,6 +9,18 @@ const { handleRoll, handlePrefixRoll, handleRerollSelect, handleDoReroll, handle
 const { handleRace }    = require('./src/commands/race');
 const { handleTrain }   = require('./src/commands/train');
 const { handleDaily, handleInventory, handleInspect, handleSetRole, handleGive, handleGift, handleTransfer } = require('./src/commands/economy');
+const { restoreSessionsFromDB } = require('./src/race/raceSession');
+
+// ============================
+// Global Error Handlers — ป้องกัน process crash จาก unhandled error
+// ต้องอยู่บนสุดก่อน client สร้าง
+// ============================
+process.on('uncaughtException', err => {
+  console.error('💥 [uncaughtException]', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 [unhandledRejection]', reason, 'at:', promise);
+});
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
@@ -54,7 +66,7 @@ const commands = [
             { name: 'Front', value: 'Front' }, { name: 'Pace', value: 'Pace' },
             { name: 'Late',  value: 'Late'  }, { name: 'End',  value: 'End'  },
           ))
-.addBooleanOption(o => o.setName('hillclear').setDescription('ใช้ Hill Clear? (Nakayama เท่านั้น)').setRequired(false))
+        .addBooleanOption(o => o.setName('hillclear').setDescription('ใช้ Hill Clear? (Nakayama เท่านั้น)').setRequired(false))
     )
     .addSubcommand(s =>
       s.setName('zone').setDescription('ใช้ Zone (G1 เท่านั้น ใช้ได้ 1 ครั้งต่อแข่ง)')
@@ -178,6 +190,7 @@ const commands = [
 client.once('clientReady', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   await initDB();
+  await restoreSessionsFromDB(); // โหลด active sessions กลับมาหลัง restart
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
     await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
@@ -198,46 +211,63 @@ client.on('messageCreate', async message => {
 // Interactions — Router
 // ============================
 client.on('interactionCreate', async interaction => {
-  // Role check สำหรับ slash commands (ยกเว้น roll, daily, inventory)
-  if (interaction.isChatInputCommand()) {
-    const publicCmds = ['roll', 'daily', 'inventory', 'inspect', 'allout'];
-    if (!publicCmds.includes(interaction.commandName) && !hasAllowedRole(interaction.member)) {
-      await interaction.reply({ content: '❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้', ephemeral: true });
+  try {
+    // Commands ที่ทุกคนใช้ได้ (ไม่ต้องมี Staff/Assistant role)
+    const publicCmds = [
+      'roll', 'daily', 'inventory', 'inspect', 'allout',
+      'race', 'train', 'transfer', 'debuff', 'setrole', 'trainer',
+    ];
+
+    if (interaction.isChatInputCommand()) {
+      if (!publicCmds.includes(interaction.commandName) && !hasAllowedRole(interaction.member)) {
+        await interaction.reply({ content: '❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้', ephemeral: true });
+        return;
+      }
+    }
+
+    // Select Menu
+    if (interaction.isStringSelectMenu()) {
+      if (interaction.customId.startsWith('rerollSelect:')) await handleRerollSelect(interaction);
       return;
     }
+
+    // Buttons
+    if (interaction.isButton()) {
+      const action = interaction.customId.split(':')[0];
+      if (action === 'doReroll')     await handleDoReroll(interaction);
+      if (action === 'cancelReroll') await handleCancelReroll(interaction);
+      if (action === 'safe')         await handleSafe(interaction);
+      return;
+    }
+
+    if (!interaction.isChatInputCommand()) return;
+
+    const { commandName } = interaction;
+    if (commandName === 'roll')      await handleRoll(interaction);
+    if (commandName === 'race')      await handleRace(interaction);
+    if (commandName === 'trainer')   await handleTrainerReroll(interaction);
+    if (commandName === 'debuff')    await handleDebuff(interaction);
+    if (commandName === 'allout')    await handleAllOut(interaction);
+    if (commandName === 'train')     await handleTrain(interaction, client);
+    if (commandName === 'daily')     await handleDaily(interaction);
+    if (commandName === 'inventory') await handleInventory(interaction);
+    if (commandName === 'inspect')   await handleInspect(interaction);
+    if (commandName === 'setrole')   await handleSetRole(interaction);
+    if (commandName === 'give')      await handleGive(interaction);
+    if (commandName === 'gift')      await handleGift(interaction);
+    if (commandName === 'transfer')  await handleTransfer(interaction);
+
+  } catch (err) {
+    // Router-level catch — กัน crash กรณี handler โยน error ออกมา
+    console.error('❌ [Router Error]', err);
+    try {
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp({ content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', ephemeral: true });
+      } else {
+        await interaction.reply({ content: '❌ เกิดข้อผิดพลาด กรุณาลองใหม่', ephemeral: true });
+      }
+    } catch { /* interaction อาจ expire แล้ว */ }
   }
-
-  // Select Menu
-  if (interaction.isStringSelectMenu()) {
-    if (interaction.customId.startsWith('rerollSelect:')) await handleRerollSelect(interaction);
-    return;
-  }
-
-  // Buttons
-  if (interaction.isButton()) {
-    const action = interaction.customId.split(':')[0];
-    if (action === 'doReroll')     await handleDoReroll(interaction);
-    if (action === 'cancelReroll') await handleCancelReroll(interaction);
-    if (action === 'safe')         await handleSafe(interaction);
-    return;
-  }
-
-  if (!interaction.isChatInputCommand()) return;
-
-  const { commandName } = interaction;
-  if (commandName === 'roll')      await handleRoll(interaction);
-  if (commandName === 'race')      await handleRace(interaction);
-  if (commandName === 'trainer')   await handleTrainerReroll(interaction);
-  if (commandName === 'debuff')    await handleDebuff(interaction);
-  if (commandName === 'allout')    await handleAllOut(interaction);
-  if (commandName === 'train')     await handleTrain(interaction, client);
-  if (commandName === 'daily')     await handleDaily(interaction);
-  if (commandName === 'inventory') await handleInventory(interaction);
-  if (commandName === 'inspect')   await handleInspect(interaction);
-  if (commandName === 'setrole')   await handleSetRole(interaction);
-  if (commandName === 'give')      await handleGive(interaction);
-  if (commandName === 'gift')      await handleGift(interaction);
-  if (commandName === 'transfer')  await handleTransfer(interaction);
 });
 
 client.login(process.env.DISCORD_TOKEN);

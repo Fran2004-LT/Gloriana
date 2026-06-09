@@ -1,5 +1,7 @@
 'use strict';
 
+const { saveSessionDB, loadAllSessionsDB, deleteSessionDB } = require('../db');
+
 /**
  * Phase structure ตามระยะสนาม
  * Sprint    (8T)  → [2,2,2,2]
@@ -23,15 +25,50 @@ function calcPhaseAndTurn(totalTurn, structure) {
     }
     remaining -= structure[p];
   }
-  // เกิน → จบแล้ว
   const lastPhase = structure.length;
   return { phase: lastPhase, turn: structure[lastPhase - 1] };
 }
 
+// in-memory store (loaded from DB on startup)
 const sessions  = new Map();
 const lastRolls = new Map();
 
-function openSession(guildId, channelId, track = 'ไม่ระบุ', grade = 'G3', distance = 12) {
+// =================== Persistence helpers ===================
+
+/**
+ * บันทึก session ลง DB — เรียกหลังทุก mutation
+ */
+async function persistSession(guildId) {
+  const session = sessions.get(guildId);
+  if (!session) return;
+  try {
+    await saveSessionDB(guildId, session);
+  } catch (err) {
+    console.error(`[raceSession] persistSession failed for ${guildId}:`, err);
+  }
+}
+
+/**
+ * โหลด sessions ทั้งหมดจาก DB กลับมาใส่ memory
+ * เรียกครั้งเดียวตอน bot start (จาก initDB flow)
+ */
+async function restoreSessionsFromDB() {
+  try {
+    const all = await loadAllSessionsDB();
+    let count = 0;
+    for (const [guildId, session] of Object.entries(all)) {
+      sessions.set(guildId, session);
+      count++;
+    }
+    if (count > 0) console.log(`✅ [raceSession] Restored ${count} active session(s) from DB`);
+  } catch (err) {
+    console.error('[raceSession] restoreSessionsFromDB failed:', err);
+  }
+}
+
+// =================== Session operations ===================
+
+async function openSession(guildId, channelId, track = 'ไม่ระบุ', grade = 'G3', distance = 12) {
   if (sessions.has(guildId)) throw new Error('มี session การแข่งที่เปิดอยู่แล้ว');
 
   const structure = getPhaseStructure(distance);
@@ -40,12 +77,14 @@ function openSession(guildId, channelId, track = 'ไม่ระบุ', grade 
   sessions.set(guildId, {
     guildId, channelId, track, grade, distance,
     structure,
-    status:    'racing',
+    status:      'racing',
     phase, turn, totalTurn: 1,
-    isFirstTurn: true,  // true แค่เทิร์นแรกของการแข่งทั้งหมด
-    players:   new Map(),
+    isFirstTurn: true,
+    players:      new Map(),
     turnSnapshot: new Map(),
   });
+
+  await persistSession(guildId);
   return sessions.get(guildId);
 }
 
@@ -62,10 +101,14 @@ function registerPlayer(guildId, userId, displayName, position, options = {}) {
     reroll: { main: 1, oneUse: 0 },
     allOutCount: 0,
     rolled: false,
-    hillCleared: options.hillCleared || false,
+    hillCleared:  options.hillCleared  || false,
     zoneEnabled:  options.zoneEnabled  || false,
   });
   session.turnSnapshot.set(userId, 0);
+
+  // persist async (ไม่ await เพื่อไม่ block — caller จัดการ await เองถ้าต้องการ)
+  persistSession(guildId).catch(err => console.error('[registerPlayer] persist failed:', err));
+
   return session.players.get(userId);
 }
 
@@ -78,12 +121,14 @@ function adjustScore(guildId, userId, amount) {
   if (player.score - amount < 0) throw new Error('คะแนนจะติดลบ ลดไม่ได้');
   player.score -= amount;
   session.turnSnapshot.set(userId, player.score);
+
+  persistSession(guildId).catch(err => console.error('[adjustScore] persist failed:', err));
   return player;
 }
 
 /**
  * บันทึกคะแนน
- * replace = true  → แทนที่ (reroll/safe)
+ * replace = true  → แทนที่ (reroll/safe) โดยใช้ turnSnapshot เป็น base
  * replace = false → บวกเพิ่ม (ทอยปกติ)
  * isReroll = true → อนุญาตแม้ rolled แล้ว
  */
@@ -93,16 +138,14 @@ function submitScore(guildId, userId, rollResult, replace = false, isReroll = fa
   const player = session.players.get(userId);
   if (!player) throw new Error('คุณไม่ได้อยู่ใน session นี้');
 
-  // เช็คทอยซ้ำ
   if (player.rolled && !isReroll) {
     throw new Error('คุณทอยไปแล้วในเทิร์นนี้');
   }
 
-  const last     = lastRolls.get(`${guildId}:${userId}`);
-  const oldTotal = last ? last.total : 0;
-
-  if (replace && last) {
-    player.score = player.score - oldTotal + rollResult.total;
+  if (replace) {
+    // ใช้ snapshot ต้นเทิร์นเป็น base เสมอ — กัน bug คะแนนหายจากการ replace ซ้อนกัน
+    const base = session.turnSnapshot.get(userId) ?? 0;
+    player.score = base + rollResult.total;
   } else {
     player.score += rollResult.total;
   }
@@ -111,7 +154,9 @@ function submitScore(guildId, userId, rollResult, replace = false, isReroll = fa
   lastRolls.set(`${guildId}:${userId}`, { ...rollResult });
 
   const canSafe = rollResult.chosen.some(n => n >= 1 && n <= 10);
-  return { player, canSafe, oldTotal };
+
+  persistSession(guildId).catch(err => console.error('[submitScore] persist failed:', err));
+  return { player, canSafe };
 }
 
 function getTurnSnapshot(guildId) {
@@ -135,30 +180,35 @@ function trainerReroll(guildId, targetUserId, rollFn) {
   if (!last) throw new Error('ยังไม่มีผลสุ่มของผู้เล่นคนนี้');
 
   const newResult = rollFn(last.notation);
-  player.score    = player.score - last.total + newResult.total;
+
+  // ใช้ snapshot ต้นเทิร์นเป็น base เหมือน submitScore replace
+  const base = session.turnSnapshot.get(targetUserId) ?? 0;
+  player.score = base + newResult.total;
+
   lastRolls.set(`${guildId}:${targetUserId}`, { ...newResult });
+
+  persistSession(guildId).catch(err => console.error('[trainerReroll] persist failed:', err));
   return { player, newResult, oldResult: last };
 }
 
 /**
- * /race next — จบเทิร์น อัตโนมัติ
+ * /race next — จบเทิร์น
  */
-function next(guildId) {
+async function next(guildId) {
   const session = getSession(guildId);
   if (session.status !== 'racing') throw new Error('การแข่งยังไม่เริ่ม');
 
   for (const p of session.players.values()) {
-    p.rolled = false;
-    p.slowedThisTurn = false;
-    p.debuffed = false;
+    p.rolled          = false;
+    p.slowedThisTurn  = false;
+    p.debuffed        = false;
   }
-  session.isFirstTurn = false; // หลังเทิร์นแรกไปแล้ว
+  session.isFirstTurn = false;
 
-  // จบการแข่ง
   if (session.totalTurn >= session.distance) {
-    // reset main reroll cooldown ทุกคนตอนแข่งจบ
     for (const p of session.players.values()) p.mainRerollCooldown = false;
     session.status = 'finished';
+    await persistSession(guildId);
     return { type: 'finished', phase: session.phase, turn: session.turn, totalTurn: session.totalTurn };
   }
 
@@ -169,10 +219,11 @@ function next(guildId) {
   session.phase = phase;
   session.turn  = turn;
 
-  // snapshot คะแนน
   for (const [uid, p] of session.players.entries()) {
     session.turnSnapshot.set(uid, p.score);
   }
+
+  await persistSession(guildId);
 
   const type = session.phase !== prevPhase ? 'phase' : 'turn';
   return { type, phase: session.phase, turn: session.turn, totalTurn: session.totalTurn };
@@ -186,7 +237,7 @@ function getSession(guildId) {
 
 function hasSession(guildId) { return sessions.has(guildId); }
 
-function closeSession(guildId) {
+async function closeSession(guildId) {
   const session = sessions.get(guildId);
   if (session) {
     for (const userId of session.players.keys()) {
@@ -194,6 +245,11 @@ function closeSession(guildId) {
     }
   }
   sessions.delete(guildId);
+  try {
+    await deleteSessionDB(guildId);
+  } catch (err) {
+    console.error('[closeSession] deleteSessionDB failed:', err);
+  }
 }
 
 function getLeaderboard(guildId) {
@@ -204,6 +260,7 @@ function getLeaderboard(guildId) {
 }
 
 module.exports = {
+  restoreSessionsFromDB,
   setLastRoll,
   openSession, registerPlayer,
   adjustScore,

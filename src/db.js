@@ -32,12 +32,26 @@ async function initDB() {
       updated_at    TIMESTAMP DEFAULT NOW()
     )
   `);
+
+  // ตารางเก็บ race session เพื่อให้ข้อมูลไม่หายเมื่อ process restart
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS race_sessions (
+      guild_id    TEXT PRIMARY KEY,
+      channel_id  TEXT NOT NULL,
+      track       TEXT NOT NULL,
+      grade       TEXT NOT NULL,
+      distance    INTEGER NOT NULL,
+      data        JSONB NOT NULL,
+      created_at  TIMESTAMP DEFAULT NOW(),
+      updated_at  TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
   console.log('✅ Database ready');
 }
 
-/**
- * ดึง inventory จาก DB (ถ้าไม่มีสร้างใหม่)
- */
+// =================== Inventory ===================
+
 async function getInventoryDB(userId) {
   const res = await pool.query(
     'SELECT * FROM inventory WHERE user_id = $1',
@@ -53,9 +67,6 @@ async function getInventoryDB(userId) {
   return rowToInventory(res.rows[0]);
 }
 
-/**
- * บันทึก inventory ลง DB
- */
 async function saveInventoryDB(userId, inv) {
   await pool.query(`
     INSERT INTO inventory (
@@ -83,6 +94,98 @@ async function saveInventoryDB(userId, inv) {
     inv.stats.g1Wins, inv.stats.g2Wins, inv.stats.g3Wins, inv.stats.races,
   ]);
 }
+
+// =================== Race Session ===================
+
+/**
+ * บันทึก session ลง DB
+ * data = object ทั้งหมด (players Map จะถูก serialize เป็น array)
+ */
+async function saveSessionDB(guildId, sessionData) {
+  // Map serialize ไม่ได้ตรงๆ ต้องแปลงก่อน
+  const serialized = serializeSession(sessionData);
+  await pool.query(`
+    INSERT INTO race_sessions (guild_id, channel_id, track, grade, distance, data, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, NOW())
+    ON CONFLICT (guild_id) DO UPDATE SET
+      channel_id = $2,
+      track      = $3,
+      grade      = $4,
+      distance   = $5,
+      data       = $6,
+      updated_at = NOW()
+  `, [
+    guildId,
+    sessionData.channelId,
+    sessionData.track,
+    sessionData.grade,
+    sessionData.distance,
+    JSON.stringify(serialized),
+  ]);
+}
+
+/**
+ * โหลด session จาก DB (คืนค่า null ถ้าไม่มี)
+ */
+async function loadSessionDB(guildId) {
+  const res = await pool.query(
+    'SELECT data FROM race_sessions WHERE guild_id = $1',
+    [guildId]
+  );
+  if (res.rows.length === 0) return null;
+  return deserializeSession(res.rows[0].data);
+}
+
+/**
+ * โหลด active sessions ทั้งหมด (ใช้ตอน bot start)
+ */
+async function loadAllSessionsDB() {
+  const res = await pool.query('SELECT guild_id, data FROM race_sessions');
+  const out = {};
+  for (const row of res.rows) {
+    out[row.guild_id] = deserializeSession(row.data);
+  }
+  return out;
+}
+
+/**
+ * ลบ session จาก DB
+ */
+async function deleteSessionDB(guildId) {
+  await pool.query('DELETE FROM race_sessions WHERE guild_id = $1', [guildId]);
+}
+
+// =================== Serialization helpers ===================
+
+/**
+ * แปลง session object (มี Map) → plain object สำหรับ JSON
+ */
+function serializeSession(session) {
+  return {
+    ...session,
+    players: [...session.players.entries()].map(([id, p]) => ({ id, ...p })),
+    turnSnapshot: [...session.turnSnapshot.entries()].map(([id, score]) => ({ id, score })),
+  };
+}
+
+/**
+ * แปลง plain object จาก DB → session object (คืน Map กลับมา)
+ */
+function deserializeSession(data) {
+  const session = typeof data === 'string' ? JSON.parse(data) : data;
+  const players = new Map();
+  for (const p of (session.players || [])) {
+    const { id, ...rest } = p;
+    players.set(id, rest);
+  }
+  const turnSnapshot = new Map();
+  for (const s of (session.turnSnapshot || [])) {
+    turnSnapshot.set(s.id, s.score);
+  }
+  return { ...session, players, turnSnapshot };
+}
+
+// =================== Row mappers ===================
 
 function rowToInventory(row) {
   return {
@@ -121,4 +224,13 @@ function buildDefault(userId) {
   };
 }
 
-module.exports = { pool, initDB, getInventoryDB, saveInventoryDB };
+module.exports = {
+  pool,
+  initDB,
+  getInventoryDB,
+  saveInventoryDB,
+  saveSessionDB,
+  loadSessionDB,
+  loadAllSessionsDB,
+  deleteSessionDB,
+};

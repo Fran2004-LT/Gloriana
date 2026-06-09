@@ -22,7 +22,7 @@ async function handleRace(interaction) {
       const grade    = interaction.options.getString('grade');
       const distance = interaction.options.getInteger('distance');
       const distNames = { 8: 'Sprint', 12: 'Mile/Medium', 14: 'Long' };
-      openSession(guildId, interaction.channelId, track, grade, distance);
+      await openSession(guildId, interaction.channelId, track, grade, distance);
       await interaction.reply(
         `🏇 **เปิด Session การแข่งแล้ว!**\n` +
         `🏟️ ${track} | ${grade} | ${distNames[distance]} (${distance} เทิร์น)\n\n` +
@@ -73,7 +73,7 @@ async function handleRace(interaction) {
     if (sub === 'zone') {
       const session = getSession(guildId);
       const player  = session.players.get(interaction.user.id);
-      const inv     = getInventory(interaction.user.id);
+      const inv     = await getInventory(interaction.user.id);
       const name    = interaction.member?.displayName || interaction.user.username;
 
       if (!player)                throw new Error('คุณยังไม่ได้ลงทะเบียนแข่ง');
@@ -85,15 +85,12 @@ async function handleRace(interaction) {
       const type   = interaction.options.getString('type');
       const isGold = type === 'gold';
 
-      // ดึง notation ตรงๆ ตาม position + phase + white/gold
       const { getNotation } = require('../dice/diceTable');
       let notation = getNotation(player.position, session.phase, isGold);
 
-      // ใส่ hill debuff ถ้าไม่ได้ clear
       const hill = player.hillCleared ? 0 : getHillDebuff(session.track, player.position, session.phase);
       if (hill > 0) notation = notation + '-' + hill;
 
-      // ทอย 2 ครั้งด้วย notation จริง
       const r1   = roll(notation);
       const r2   = roll(notation);
       const best  = r1.total >= r2.total ? r1 : r2;
@@ -101,7 +98,7 @@ async function handleRace(interaction) {
 
       player.zoneUsed = true;
 
-      const { player: updated } = submitScore(guildId, interaction.user.id, best, true, true); // replace คะแนนเดิม
+      const { player: updated } = submitScore(guildId, interaction.user.id, best, true, true);
 
       await interaction.reply(
         `🌀 **${name}** ใช้ **Zone** (${isGold ? '🟡 Gold' : '⚪ White'}) ด้วย \`${notation}\`\n` +
@@ -114,7 +111,8 @@ async function handleRace(interaction) {
 
     // ============================
     if (sub === 'next') {
-      const result = next(guildId);
+      // next() เป็น async แล้วหลังแก้ bug — ต้อง await
+      const result = await next(guildId);
       if (result.type === 'finished') {
         const lb      = getLeaderboard(guildId);
         const session = getSession(guildId);
@@ -151,17 +149,16 @@ async function handleRace(interaction) {
     }
 
     if (sub === 'close') {
-      // reset mainRerollCooldown ก่อน close
       try {
         const s = getSession(guildId);
         for (const p of s.players.values()) p.mainRerollCooldown = false;
       } catch {}
-      closeSession(guildId);
+      // closeSession() เป็น async แล้วหลังแก้ bug — ต้อง await
+      await closeSession(guildId);
       await interaction.reply(`🔒 ปิด Session แล้ว`);
     }
 
     // ============================
-    // slow — จำกัด 1 ครั้ง/เทิร์น
     if (sub === 'slow') {
       const session = getSession(guildId);
       const player  = session.players.get(interaction.user.id);
@@ -172,7 +169,6 @@ async function handleRace(interaction) {
       const updated   = adjustScore(guildId, interaction.user.id, amount);
       player.slowedThisTurn = true;
 
-      // เช็ค gold zone หลังลดแต้ม (ใช้ snapshot ที่ update แล้ว)
       const snapshot   = getTurnSnapshot(guildId);
       const allScores  = snapshot.map(([, s]) => s);
       const myScore    = session.turnSnapshot.get(interaction.user.id) ?? updated.score;
@@ -192,7 +188,7 @@ async function handleRace(interaction) {
       const amount     = interaction.options.getInteger('amount');
       const targetName = interaction.guild?.members.cache.get(target.id)?.displayName || target.username;
       await addItem(target.id, type, amount);
-      const inv   = getInventory(target.id);
+      const inv   = await getInventory(target.id);
       const names = { 'reroll.main': 'Main', 'reroll.oneUse': 'One-use', 'raceSafe': 'Race Safe' };
       await interaction.reply(
         `✅ +${amount} **${names[type]}** → **${targetName}**\n` +
