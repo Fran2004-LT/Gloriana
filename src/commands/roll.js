@@ -226,18 +226,25 @@ async function handleSafe(interaction) {
   }
 
   try {
+    let grade = null;
+    if (guildId && hasSession(guildId)) {
+      const s = getSession(guildId);
+      grade = s.grade;
+    }
+
+    // ใช้ raceSafe จาก inventory — จำกัด 3 ครั้งสำหรับ Debut, ขึ้นอยู่กับจำนวนที่มีสำหรับ Grade อื่น
+    await useItem(interaction.user.id, 'raceSafe');
+
     const result = roll(notation);
     let scoreMsg = '';
     let canSafe  = false;
-    let grade    = null;
 
     if (guildId && hasSession(guildId)) {
       try {
-        const s = getSession(guildId);
-        grade = s.grade;
         const { player, canSafe: cs } = submitScore(guildId, interaction.user.id, result, true, true);
-        scoreMsg = `\n📊 คะแนนสะสม: **${player.score}**`;
-        canSafe  = cs;
+        const inv = await getInventory(interaction.user.id);
+        scoreMsg = `\n📊 คะแนนสะสม: **${player.score}** | 🛡️ Race Safe เหลือ: ${inv.raceSafe}`;
+        canSafe  = cs && inv.raceSafe > 0;
       } catch { }
     }
 
