@@ -28,25 +28,30 @@ function buildResultLines(emoji, label, result, scoreMsg = '') {
   return lines.join('\n');
 }
 
-function buildActionRow(notation, label, canSafe, grade, userId) {
+function buildActionRow(notation, label, canSafe, grade, userId, safeCount) {
   const rows    = [];
   const options = [
-    { label: '🔁 Main Reroll',    description: 'reroll หลัก', value: 'main'   },
+    { label: '🔁 Main Reroll',    description: 'reroll หลัก',  value: 'main'   },
     { label: '⚡ One-use Reroll', description: 'ใช้แล้วหมดไป', value: 'oneUse' },
   ];
+
+  // G1/G2/G3 → Race Safe อยู่ใน dropdown
   if (grade && grade !== 'Debut') {
     options.push({ label: '🛡️ Race Safe', description: 'ใช้แล้วหมดไป', value: 'raceSafe' });
   }
+
   const select = new StringSelectMenuBuilder()
     .setCustomId(`rerollSelect:${notation}:${label}:${userId}`)
     .setPlaceholder('🔁 เลือกประเภท Reroll')
     .addOptions(options);
   rows.push(new ActionRowBuilder().addComponents(select));
 
+  // Debut → Main Safe เป็นปุ่มแยก แสดงจำนวนที่เหลือด้วย
   if (canSafe && grade === 'Debut') {
+    const remaining = safeCount !== undefined ? safeCount : '?';
     const safeBtn = new ButtonBuilder()
       .setCustomId(`safe:${notation}:${label}:${userId}`)
-      .setLabel('🛡️ Safe (ทอยใหม่)')
+      .setLabel(`🛡️ Main Safe (${remaining}/3)`)
       .setStyle(ButtonStyle.Primary);
     rows.push(new ActionRowBuilder().addComponents(safeBtn));
   }
@@ -96,7 +101,12 @@ async function doRoll(userId, displayName, guildId, notation, label) {
   }
 
   const lines = buildResultLines('🎲', label, result, scoreMsg);
-  const rows  = (guildId && hasSession(guildId)) ? buildActionRow(notation, label, canSafe, grade, userId) : [];
+  let safeCount;
+  if (guildId && hasSession(guildId) && grade === 'Debut') {
+    const s = getSession(guildId);
+    safeCount = s.players.get(userId)?.debutSafeCount ?? 0;
+  }
+  const rows  = (guildId && hasSession(guildId)) ? buildActionRow(notation, label, canSafe, grade, userId, safeCount) : [];
   return { lines, rows };
 }
 
@@ -198,7 +208,12 @@ async function handleDoReroll(interaction) {
 
     const lines = buildResultLines('🔁', label, result, scoreMsg);
     await interaction.update({ content: '🔁 Rerolling...', components: [] });
-    const rows = (guildId && hasSession(guildId)) ? buildActionRow(notation, label, canSafe, grade, ownerId) : [];
+    let safeCount2;
+    if (guildId && hasSession(guildId) && grade === 'Debut') {
+      const s2 = getSession(guildId);
+      safeCount2 = s2.players.get(ownerId)?.debutSafeCount ?? 0;
+    }
+    const rows = (guildId && hasSession(guildId)) ? buildActionRow(notation, label, canSafe, grade, ownerId, safeCount2) : [];
     await interaction.followUp({ content: lines, components: rows });
 
   } catch (err) { await interaction.update({ content: `❌ ${err.message}`, components: [] }); }
@@ -226,31 +241,48 @@ async function handleSafe(interaction) {
   }
 
   try {
-    let grade = null;
+    let grade  = null;
+    let player = null;
+
     if (guildId && hasSession(guildId)) {
       const s = getSession(guildId);
-      grade = s.grade;
+      grade  = s.grade;
+      player = s.players.get(interaction.user.id);
     }
 
-    // ใช้ raceSafe จาก inventory — จำกัด 3 ครั้งสำหรับ Debut, ขึ้นอยู่กับจำนวนที่มีสำหรับ Grade อื่น
-    await useItem(interaction.user.id, 'raceSafe');
+    // Debut → หัก debutSafeCount ใน session (ไม่แตะ inventory)
+    // G1/G2/G3 → หัก raceSafe จาก inventory
+    if (grade === 'Debut') {
+      if (!player) throw new Error('คุณยังไม่ได้ลงทะเบียนแข่ง');
+      if (player.debutSafeCount <= 0) throw new Error('ใช้ Main Safe หมดแล้ว (0/3)');
+      player.debutSafeCount--;
+    } else {
+      await useItem(interaction.user.id, 'raceSafe');
+    }
 
     const result = roll(notation);
     let scoreMsg = '';
     let canSafe  = false;
+    let safeCount;
 
     if (guildId && hasSession(guildId)) {
       try {
-        const { player, canSafe: cs } = submitScore(guildId, interaction.user.id, result, true, true);
-        const inv = await getInventory(interaction.user.id);
-        scoreMsg = `\n📊 คะแนนสะสม: **${player.score}** | 🛡️ Race Safe เหลือ: ${inv.raceSafe}`;
-        canSafe  = cs && inv.raceSafe > 0;
+        const { player: updated, canSafe: cs } = submitScore(guildId, interaction.user.id, result, true, true);
+        if (grade === 'Debut') {
+          safeCount = updated.debutSafeCount;
+          scoreMsg  = `\n📊 คะแนนสะสม: **${updated.score}** | 🛡️ Main Safe เหลือ: ${safeCount}/3`;
+          canSafe   = cs && safeCount > 0;
+        } else {
+          const inv = await getInventory(interaction.user.id);
+          scoreMsg  = `\n📊 คะแนนสะสม: **${updated.score}** | 🛡️ Race Safe เหลือ: ${inv.raceSafe}`;
+          canSafe   = cs && inv.raceSafe > 0;
+        }
       } catch { }
     }
 
     const lines = buildResultLines('🛡️', `${label} Safe`, result, scoreMsg);
     await interaction.update({ content: `🛡️ **${label}** ใช้ Safe...`, components: [] });
-    const rows = (guildId && hasSession(guildId)) ? buildActionRow(notation, label, canSafe, grade, ownerId) : [];
+    const rows = (guildId && hasSession(guildId)) ? buildActionRow(notation, label, canSafe, grade, ownerId, safeCount) : [];
     await interaction.followUp({ content: lines, components: rows });
 
   } catch (err) { await interaction.update({ content: `❌ ${err.message}`, components: [] }); }
