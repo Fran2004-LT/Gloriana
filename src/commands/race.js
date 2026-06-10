@@ -58,7 +58,7 @@ async function handleRace(interaction) {
         position, { hillCleared }
       );
 
-      if (session.grade === 'Debut') await addItem(interaction.user.id, 'raceSafe', 3);
+      // Debut ใช้ debutSafeCount ใน session แล้ว ไม่ต้องเพิ่ม raceSafe ใน inventory
 
       const extra = statusMsgs.length ? `\n${statusMsgs.join('\n')}` : '';
       await interaction.reply(
