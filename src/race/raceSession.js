@@ -95,14 +95,16 @@ function registerPlayer(guildId, userId, displayName, position, options = {}) {
   if (!VALID.includes(position)) throw new Error(`สายไม่ถูกต้อง ต้องเป็น: ${VALID.join(', ')}`);
   if (session.players.has(userId)) throw new Error('คุณลงทะเบียนไปแล้ว');
 
+  const isDebut = session.grade === 'Debut';
   session.players.set(userId, {
     userId, displayName, position,
     score: 0,
     reroll: { main: 1, oneUse: 0 },
     allOutCount: 0,
     rolled: false,
-    hillCleared:  options.hillCleared  || false,
-    zoneEnabled:  options.zoneEnabled  || false,
+    hillCleared:   options.hillCleared  || false,
+    zoneEnabled:   options.zoneEnabled  || false,
+    debutSafeCount: isDebut ? 3 : 0,  // Main Safe — เฉพาะ Debut 3 ครั้ง
   });
   session.turnSnapshot.set(userId, 0);
 
