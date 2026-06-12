@@ -1,5 +1,6 @@
 'use strict';
 
+const { EmbedBuilder } = require('discord.js');
 const { getInventory, addItem, recordWin } = require('../inventory/inventoryStore');
 const { getPlayerNotation }  = require('../dice/diceTable');
 const { getHillDebuff }      = require('../config/tracks');
@@ -10,6 +11,45 @@ const {
   next, getSession, hasSession, closeSession, getLeaderboard,
   getTurnSnapshot,
 } = require('../race/raceSession');
+
+// ============================
+// Leaderboard embed helper
+// ============================
+const MEDALS = ['🥇', '🥈', '🥉'];
+const POSITION_COLOR = { G1: 0xFFD700, G2: 0xC0C0C0, G3: 0xCD7F32, Debut: 0x7289DA };
+
+function buildLeaderboardEmbed(session, lb, title, closed = false) {
+  const color = POSITION_COLOR[session.grade] || 0xF5C518;
+  const board = lb.map(p => {
+    const medal = MEDALS[p.rank - 1] || `**${p.rank}.**`;
+    const zone  = p.zoneUsed    ? ' 🌀' : '';
+    const hill  = p.hillCleared ? ' ✅' : '';
+    const deb   = p.debuffed    ? ' 🔴' : '';
+    return `${medal} **${p.displayName}** [${p.position}${zone}${hill}${deb}] — **${p.score.toLocaleString()}** แต้ม`;
+  }).join('\n') || 'ยังไม่มีผู้เล่น';
+
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(title)
+    .setDescription(board)
+    .addFields({
+      name: '🏟️ สนาม',
+      value: `${session.track} | ${session.grade} | ${session.distance} เทิร์น`,
+      inline: true,
+    });
+
+  if (!closed) {
+    embed.addFields({
+      name: '📍 สถานะ',
+      value: `เฟส ${session.phase} เทิร์น ${session.turn} (${session.totalTurn}/${session.distance})`,
+      inline: true,
+    });
+  }
+
+  if (closed) embed.setFooter({ text: 'Session ปิดแล้ว' });
+  return embed;
+}
+
 
 async function handleRace(interaction) {
   const sub     = interaction.options.getSubcommand();
@@ -116,9 +156,9 @@ async function handleRace(interaction) {
       if (result.type === 'finished') {
         const lb      = getLeaderboard(channelId);
         const session = getSession(channelId);
-        const board   = lb.map(p => `${p.rank}. **${p.displayName}** [${p.position}] — ${p.score} แต้ม`).join('\n');
         if (lb.length > 0) await recordWin(lb[0].userId, session.grade);
-        await interaction.reply(`🏁 **การแข่งจบแล้ว!**\n\n🏆 **ผลการแข่ง**\n\n${board}`);
+        const embed = buildLeaderboardEmbed(session, lb, '🏁 การแข่งจบแล้ว!', true);
+        await interaction.reply({ embeds: [embed] });
       } else {
         const session = getSession(channelId);
         const prefix  = result.type === 'phase' ? `🔄 **จบเฟส ${result.phase - 1}!**\n\n` : `⏭️ **จบเทิร์น!**\n`;
@@ -130,32 +170,29 @@ async function handleRace(interaction) {
     if (sub === 'status') {
       const session = getSession(channelId);
       const lb      = getLeaderboard(channelId);
-      const board   = lb.map(p => {
-        const zone = p.zoneUsed    ? ' 🌀' : '';
-        const hill = p.hillCleared ? ' ✅' : '';
-        const deb  = p.debuffed    ? ' 🔴' : '';
-        return `${p.rank}. **${p.displayName}** [${p.position}${zone}${hill}${deb}] — ${p.score} แต้ม`;
-      }).join('\n');
-      await interaction.reply(
-        `📊 **${session.track}** ${session.grade} | เฟส ${session.phase} เทิร์น ${session.turn} (${session.totalTurn}/${session.distance})\n\n` +
-        `${board || 'ยังไม่มีผู้เล่น'}`
-      );
+      const embed   = buildLeaderboardEmbed(session, lb, '📊 สถานะการแข่ง');
+      await interaction.reply({ embeds: [embed] });
     }
 
     if (sub === 'finish') {
-      const lb    = getLeaderboard(channelId);
-      const board = lb.map(p => `${p.rank}. **${p.displayName}** [${p.position}] — ${p.score} แต้ม`).join('\n');
-      await interaction.reply(`🏆 **ผลการแข่ง**\n\n${board}`);
+      const session = getSession(channelId);
+      const lb      = getLeaderboard(channelId);
+      const embed   = buildLeaderboardEmbed(session, lb, '🏆 ผลการแข่ง');
+      await interaction.reply({ embeds: [embed] });
     }
 
     if (sub === 'close') {
       try {
-        const s = getSession(channelId);
+        const s  = getSession(channelId);
+        const lb = getLeaderboard(channelId);
         for (const p of s.players.values()) p.mainRerollCooldown = false;
-      } catch {}
-      // closeSession() เป็น async แล้วหลังแก้ bug — ต้อง await
-      await closeSession(channelId);
-      await interaction.reply(`🔒 ปิด Session แล้ว`);
+        const embed = buildLeaderboardEmbed(s, lb, '🔒 ปิด Session — ผลการแข่งสุดท้าย', true);
+        await closeSession(channelId);
+        await interaction.reply({ embeds: [embed] });
+      } catch {
+        await closeSession(channelId).catch(() => {});
+        await interaction.reply('🔒 ปิด Session แล้ว');
+      }
     }
 
     // ============================

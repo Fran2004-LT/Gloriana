@@ -1,31 +1,61 @@
 'use strict';
 
+const { EmbedBuilder } = require('discord.js');
 const { getInventory, addItem, setRole } = require('../inventory/inventoryStore');
 const { claimDaily, formatRewards }      = require('../economy/dailyStreak');
 
 // ============================
 // Inventory display
 // ============================
-function buildInventoryText(name, inv) {
+function buildInventoryEmbed(name, inv, avatarUrl) {
   const roleLabel = { uma: '🏇 สาวม้า', trainer: '👤 เทรนเนอร์', both: '🏇👤 ทั้งคู่' };
   const roles     = (inv.roles.includes('uma') && inv.roles.includes('trainer')) ? 'both' : inv.roles[0] || 'uma';
-  const streakBar = `${'⭐'.repeat(inv.streak.current)}${'☆'.repeat(7 - inv.streak.current)} (${inv.streak.current}/7)`;
-  return [
-    `📦 **Inventory — ${name}** | ${roleLabel[roles]}`,
-    ``,
-    `💰 Gold: **${inv.gold.toLocaleString()}** | 🌈 RC: **${inv.rc.toLocaleString()}**`,
-    ``,
-    `🔁 Main Reroll: **${inv.reroll.main}**`,
-    `⚡ One-use Reroll: **${inv.reroll.oneUse}**`,
-    `🎯 Trainer Reroll: **${inv.reroll.trainer}**`,
-    `🛡️ Race Safe: **${inv.raceSafe}**`,
-    `🏔️ Hill Clear: **${inv.hillClearItem ? 'มี' : 'ไม่มี'}**`,
-    `🌀 Zone: **${inv.zoneUnlocked ? 'Unlocked' : 'Locked'}**`,
-    ``,
-    `📅 Daily Streak: ${streakBar}`,
-    ``,
-    `📊 G1: ${inv.stats.g1Wins}W | G2: ${inv.stats.g2Wins}W | G3: ${inv.stats.g3Wins}W | แข่ง ${inv.stats.races} ครั้ง`,
-  ].join('\n');
+  const streakBar = `${'⭐'.repeat(inv.streak?.current || 0)}${'☆'.repeat(7 - (inv.streak?.current || 0))} (${inv.streak?.current || 0}/7)`;
+
+  return new EmbedBuilder()
+    .setColor(0xF5C518)
+    .setAuthor({ name: `${name} | ${roleLabel[roles]}`, iconURL: avatarUrl })
+    .setTitle('📦 Inventory')
+    .addFields(
+      // Currency
+      {
+        name: '💰 Currency',
+        value: `\`Gold\` **${inv.gold.toLocaleString()}** | \`RC\` **${inv.rc.toLocaleString()}**`,
+        inline: false,
+      },
+      // Rerolls
+      {
+        name: '🎲 Rerolls',
+        value: [
+          `🔁 Main Reroll: **${inv.reroll.main}**`,
+          `⚡ One-use Reroll: **${inv.reroll.oneUse}**`,
+          `🎯 Trainer Reroll: **${inv.reroll.trainer}**`,
+        ].join('\n'),
+        inline: true,
+      },
+      // Items
+      {
+        name: '🎒 Items',
+        value: [
+          `🛡️ Race Safe: **${inv.raceSafe}**`,
+          `🏔️ Hill Clear: **${inv.hillClearItem ? '✅ มี' : '❌ ไม่มี'}**`,
+          `🌀 Zone: **${inv.zoneUnlocked ? '✅ Unlocked' : '🔒 Locked'}**`,
+        ].join('\n'),
+        inline: true,
+      },
+      // Daily Streak
+      {
+        name: '📅 Daily Streak',
+        value: streakBar,
+        inline: false,
+      },
+      // Stats
+      {
+        name: '📊 สถิติ',
+        value: `G1: **${inv.stats.g1Wins}W** | G2: **${inv.stats.g2Wins}W** | G3: **${inv.stats.g3Wins}W** | แข่ง **${inv.stats.races}** ครั้ง`,
+        inline: false,
+      }
+    );
 }
 
 // ============================
@@ -70,19 +100,21 @@ async function handleDaily(interaction) {
 // /inventory
 // ============================
 async function handleInventory(interaction) {
-  const name = interaction.member?.displayName || interaction.user.username;
-  const inv  = await getInventory(interaction.user.id);
-  await interaction.reply({ content: buildInventoryText(name, inv), ephemeral: false });
+  const name      = interaction.member?.displayName || interaction.user.username;
+  const avatarUrl = interaction.user.displayAvatarURL();
+  const inv       = await getInventory(interaction.user.id);
+  await interaction.reply({ embeds: [buildInventoryEmbed(name, inv, avatarUrl)], ephemeral: false });
 }
 
 // ============================
 // /inspect
 // ============================
 async function handleInspect(interaction) {
-  const target = interaction.options.getUser('target') || interaction.user;
-  const name   = interaction.guild?.members.cache.get(target.id)?.displayName || target.username;
-  const inv    = getInventory(target.id);
-  await interaction.reply({ content: buildInventoryText(name, inv), ephemeral: true });
+  const target    = interaction.options.getUser('target') || interaction.user;
+  const name      = interaction.guild?.members.cache.get(target.id)?.displayName || target.username;
+  const avatarUrl = target.displayAvatarURL();
+  const inv       = await getInventory(target.id);
+  await interaction.reply({ embeds: [buildInventoryEmbed(name, inv, avatarUrl)], ephemeral: true });
 }
 
 // ============================
