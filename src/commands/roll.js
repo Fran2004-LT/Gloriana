@@ -58,13 +58,13 @@ function buildActionRow(notation, label, canSafe, grade, userId, safeCount) {
   return rows;
 }
 
-function checkNotation(guildId, userId, notation) {
-  if (!hasSession(guildId)) return null;
+function checkNotation(channelId, userId, notation) {
+  if (!hasSession(channelId)) return null;
   try {
-    const session    = getSession(guildId);
+    const session    = getSession(channelId);
     const player     = session.players.get(userId);
     if (!player) return null;
-    const snapshot   = getTurnSnapshot(guildId);
+    const snapshot   = getTurnSnapshot(channelId);
     const allScores  = snapshot.map(([, s]) => s);
     const mySnapshot = { ...player, score: session.turnSnapshot.get(userId) ?? player.score };
     const hill       = player.hillCleared ? 0 : getHillDebuff(session.track, player.position, session.phase);
@@ -77,21 +77,21 @@ function checkNotation(guildId, userId, notation) {
   } catch { return null; }
 }
 
-async function doRoll(userId, displayName, guildId, notation, label) {
+async function doRoll(userId, displayName, channelId, notation, label) {
   const result = roll(notation);
   let scoreMsg = '';
   let canSafe  = false;
   let grade    = null;
 
-  if (guildId && hasSession(guildId)) {
-    const check = checkNotation(guildId, userId, notation);
+  if (channelId && hasSession(channelId)) {
+    const check = checkNotation(channelId, userId, notation);
     if (check && !check.correct) {
       return { error: `⚠️ ควรทอย \`${check.expected}\` (${check.isGold ? '🟡 Gold' : '⚪ White'})\nคุณทอย \`${notation}\` — ผลจะไม่ถูกบันทึก` };
     }
     try {
-      const session2 = getSession(guildId);
+      const session2 = getSession(channelId);
       grade = session2.grade;
-      const { player, canSafe: cs } = submitScore(guildId, userId, result, false, false);
+      const { player, canSafe: cs } = submitScore(channelId, userId, result, false, false);
       const tier = check ? (check.isGold ? '🟡' : '⚪') : '';
       scoreMsg = `\n📊 คะแนนสะสม: **${player.score}** ${tier}`;
       canSafe  = cs;
@@ -102,11 +102,11 @@ async function doRoll(userId, displayName, guildId, notation, label) {
 
   const lines = buildResultLines('🎲', label, result, scoreMsg);
   let safeCount;
-  if (guildId && hasSession(guildId) && grade === 'Debut') {
-    const s = getSession(guildId);
+  if (channelId && hasSession(channelId) && grade === 'Debut') {
+    const s = getSession(channelId);
     safeCount = s.players.get(userId)?.debutSafeCount ?? 0;
   }
-  const rows  = (guildId && hasSession(guildId)) ? buildActionRow(notation, label, canSafe, grade, userId, safeCount) : [];
+  const rows  = (channelId && hasSession(channelId)) ? buildActionRow(notation, label, canSafe, grade, userId, safeCount) : [];
   return { lines, rows };
 }
 
@@ -117,7 +117,7 @@ async function handleRoll(interaction) {
   const notation = interaction.options.getString('notation');
   const label    = interaction.options.getString('label') || interaction.member?.displayName || interaction.user.username;
   try {
-    const res = await doRoll(interaction.user.id, interaction.member?.displayName, interaction.guildId, notation, label);
+    const res = await doRoll(interaction.user.id, interaction.member?.displayName, interaction.channelId, notation, label);
     if (res.error) { await interaction.reply({ content: res.error, ephemeral: true }); return; }
     await interaction.reply({ content: res.lines, components: res.rows });
   } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
@@ -132,7 +132,7 @@ async function handlePrefixRoll(message) {
   const label    = parts.slice(1).join(' ') || message.member?.displayName || message.author.username;
   if (!notation) { await message.reply('❌ ระบุ notation ด้วย เช่น `!r d30`'); return; }
   try {
-    const res = await doRoll(message.author.id, message.member?.displayName, message.guildId, notation, label);
+    const res = await doRoll(message.author.id, message.member?.displayName, message.channelId, notation, label);
     if (res.error) { await message.reply(res.error); return; }
     await message.reply({ content: res.lines, components: res.rows });
   } catch (err) { await message.reply(`❌ ${err.message}`); }
@@ -179,7 +179,7 @@ async function handleRerollSelect(interaction) {
 // ============================
 async function handleDoReroll(interaction) {
   const [, notation, label, type, ownerId] = interaction.customId.split(':');
-  const guildId = interaction.guildId;
+  const channelId = interaction.channelId;
 
   if (interaction.user.id !== ownerId) {
     await interaction.reply({ content: '❌ นี่ไม่ใช่ผลทอยของคุณ', ephemeral: true });
@@ -195,12 +195,12 @@ async function handleDoReroll(interaction) {
     let canSafe  = false;
     let grade    = null;
 
-    if (guildId && hasSession(guildId)) {
+    if (channelId && hasSession(channelId)) {
       try {
-        const s = getSession(guildId);
+        const s = getSession(channelId);
         grade = s.grade;
         // replace=true → ใช้ snapshot ต้นเทิร์นเป็น base (แก้ใน submitScore แล้ว)
-        const { player, canSafe: cs } = submitScore(guildId, interaction.user.id, result, true, true);
+        const { player, canSafe: cs } = submitScore(channelId, interaction.user.id, result, true, true);
         scoreMsg = `\n📊 คะแนนสะสม: **${player.score}**`;
         canSafe  = cs;
       } catch { }
@@ -209,11 +209,11 @@ async function handleDoReroll(interaction) {
     const lines = buildResultLines('🔁', label, result, scoreMsg);
     await interaction.update({ content: '🔁 Rerolling...', components: [] });
     let safeCount2;
-    if (guildId && hasSession(guildId) && grade === 'Debut') {
-      const s2 = getSession(guildId);
+    if (channelId && hasSession(channelId) && grade === 'Debut') {
+      const s2 = getSession(channelId);
       safeCount2 = s2.players.get(ownerId)?.debutSafeCount ?? 0;
     }
-    const rows = (guildId && hasSession(guildId)) ? buildActionRow(notation, label, canSafe, grade, ownerId, safeCount2) : [];
+    const rows = (channelId && hasSession(channelId)) ? buildActionRow(notation, label, canSafe, grade, ownerId, safeCount2) : [];
     await interaction.followUp({ content: lines, components: rows });
 
   } catch (err) { await interaction.update({ content: `❌ ${err.message}`, components: [] }); }
@@ -233,7 +233,7 @@ async function handleCancelReroll(interaction) {
 // ============================
 async function handleSafe(interaction) {
   const [, notation, label, ownerId] = interaction.customId.split(':');
-  const guildId = interaction.guildId;
+  const channelId = interaction.channelId;
 
   if (interaction.user.id !== ownerId) {
     await interaction.reply({ content: '❌ นี่ไม่ใช่ผลทอยของคุณ', ephemeral: true });
@@ -244,8 +244,8 @@ async function handleSafe(interaction) {
     let grade  = null;
     let player = null;
 
-    if (guildId && hasSession(guildId)) {
-      const s = getSession(guildId);
+    if (channelId && hasSession(channelId)) {
+      const s = getSession(channelId);
       grade  = s.grade;
       player = s.players.get(interaction.user.id);
     }
@@ -265,9 +265,9 @@ async function handleSafe(interaction) {
     let canSafe  = false;
     let safeCount;
 
-    if (guildId && hasSession(guildId)) {
+    if (channelId && hasSession(channelId)) {
       try {
-        const { player: updated, canSafe: cs } = submitScore(guildId, interaction.user.id, result, true, true);
+        const { player: updated, canSafe: cs } = submitScore(channelId, interaction.user.id, result, true, true);
         if (grade === 'Debut') {
           safeCount = updated.debutSafeCount;
           scoreMsg  = `\n📊 คะแนนสะสม: **${updated.score}** | 🛡️ Main Safe เหลือ: ${safeCount}/3`;
@@ -282,7 +282,7 @@ async function handleSafe(interaction) {
 
     const lines = buildResultLines('🛡️', `${label} Safe`, result, scoreMsg);
     await interaction.update({ content: `🛡️ **${label}** ใช้ Safe...`, components: [] });
-    const rows = (guildId && hasSession(guildId)) ? buildActionRow(notation, label, canSafe, grade, ownerId, safeCount) : [];
+    const rows = (channelId && hasSession(channelId)) ? buildActionRow(notation, label, canSafe, grade, ownerId, safeCount) : [];
     await interaction.followUp({ content: lines, components: rows });
 
   } catch (err) { await interaction.update({ content: `❌ ${err.message}`, components: [] }); }
@@ -292,7 +292,7 @@ async function handleSafe(interaction) {
 // Debuff skill (สกิลแดง)
 // ============================
 async function handleDebuff(interaction) {
-  const guildId    = interaction.guildId;
+  const channelId  = interaction.channelId;
   const target     = interaction.options.getUser('target');
   const targetName = interaction.guild?.members.cache.get(target.id)?.displayName || target.username;
   const userName   = interaction.member?.displayName || interaction.user.username;
@@ -303,8 +303,8 @@ async function handleDebuff(interaction) {
   }
 
   try {
-    if (!hasSession(guildId)) throw new Error('ไม่มี session การแข่งอยู่');
-    const session = getSession(guildId);
+    if (!hasSession(channelId)) throw new Error('ไม่มี session การแข่งอยู่');
+    const session = getSession(channelId);
 
     const selfPlayer = session.players.get(interaction.user.id);
     if (selfPlayer?.mainRerollCooldown === true) throw new Error('Main Reroll อยู่ใน Cooldown — รอแข่งจบ');
@@ -313,7 +313,7 @@ async function handleDebuff(interaction) {
     if (!player) throw new Error('ผู้เล่นเป้าหมายไม่ได้อยู่ใน session นี้');
     if (!player.rolled) throw new Error(`**${targetName}** ยังไม่ได้ทอยในเทิร์นนี้`);
 
-    const last = getLastRoll(guildId, target.id);
+    const last = getLastRoll(channelId, target.id);
     if (!last) throw new Error('ไม่พบผลล่าสุดของ target');
 
     await useItem(interaction.user.id, 'reroll.main');
@@ -327,7 +327,7 @@ async function handleDebuff(interaction) {
     const newResult = roll(last.notation);
     player.score    = snapshot + newResult.total;
 
-    setLastRoll(guildId, target.id, newResult);
+    setLastRoll(channelId, target.id, newResult);
 
     await interaction.reply(
       `🔴 **${userName}** ใช้สกิลแดงใส่ **${targetName}**!\n` +
@@ -342,18 +342,18 @@ async function handleDebuff(interaction) {
 // All Out
 // ============================
 async function handleAllOut(interaction) {
-  const guildId = interaction.guildId;
+  const channelId = interaction.channelId;
   const userId  = interaction.user.id;
   const name    = interaction.member?.displayName || interaction.user.username;
 
   try {
-    if (!hasSession(guildId)) throw new Error('ไม่มี session การแข่งอยู่');
-    const session = getSession(guildId);
+    if (!hasSession(channelId)) throw new Error('ไม่มี session การแข่งอยู่');
+    const session = getSession(channelId);
     const player  = session.players.get(userId);
     if (!player) throw new Error('คุณยังไม่ได้ลงทะเบียนแข่ง');
     if (!player.rolled) throw new Error('ต้องทอยก่อนถึงจะใช้ All Out ได้');
 
-    const last = getLastRoll(guildId, userId);
+    const last = getLastRoll(channelId, userId);
     if (!last) throw new Error('ไม่พบผลล่าสุด');
 
     player.allOutCount = (player.allOutCount || 0) + 1;
@@ -367,12 +367,12 @@ async function handleAllOut(interaction) {
     const newTotal  = Math.max(0, newResult.total - penalty);
     player.score    = snapshot + newTotal;
 
-    setLastRoll(guildId, userId, newResult);
+    setLastRoll(channelId, userId, newResult);
 
     await interaction.reply(
       `💥 **${name}** ใช้ **All Out** (ครั้งที่ ${n})\n` +
-      `> ผลเดิม: ${last.display} → **${last.total}**\n` +
-      `> ผลใหม่: ${newResult.display} → **${newResult.total}** (-${penalty}) = **${newTotal}**\n\n` +
+      `> ~~${last.display} → ${last.total}~~\n` +
+      `> ✨ ${newResult.display} → **${newResult.total}** (-${penalty}) = **${newTotal}**\n\n` +
       `📊 คะแนนสะสม: **${player.score}**\n` +
       `⚠️ หลังแข่งจบจะได้รับผลกระทบตามจำนวนครั้งที่ใช้`
     );
@@ -383,14 +383,14 @@ async function handleAllOut(interaction) {
 // /trainer reroll
 // ============================
 async function handleTrainerReroll(interaction) {
-  const guildId     = interaction.guildId;
+  const channelId     = interaction.channelId;
   const target      = interaction.options.getUser('target');
   const targetName  = interaction.guild?.members.cache.get(target.id)?.displayName || target.username;
   const trainerName = interaction.member?.displayName || interaction.user.username;
 
   try {
     await useItem(interaction.user.id, 'reroll.trainer');
-    const { player, newResult, oldResult } = trainerReroll(guildId, target.id, roll);
+    const { player, newResult, oldResult } = trainerReroll(channelId, target.id, roll);
     await interaction.reply(
       `🎯 **${trainerName}** ใช้ Trainer Reroll ให้ **${targetName}**\n` +
       `> ผลเดิม: ${oldResult.display} → **${oldResult.total}**\n` +

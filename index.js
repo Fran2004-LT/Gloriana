@@ -81,20 +81,10 @@ const commands = [
     .addSubcommand(s => s.setName('finish').setDescription('ผลการแข่ง'))
     .addSubcommand(s => s.setName('close').setDescription('ปิด session'))
     .addSubcommand(s =>
-      s.setName('slow').setDescription('ลดแต้มตัวเอง (1-10)')
+      s.setName('slowdown').setDescription('ลดแต้มตัวเอง (1-10)')
         .addIntegerOption(o => o.setName('amount').setDescription('จำนวน').setRequired(true).setMinValue(1).setMaxValue(10))
-    )
-    .addSubcommand(s =>
-      s.setName('addreroll').setDescription('เพิ่ม item (สตาฟ)')
-        .addUserOption(o => o.setName('target').setDescription('ผู้เล่น').setRequired(true))
-        .addStringOption(o => o.setName('type').setDescription('ประเภท').setRequired(true)
-          .addChoices(
-            { name: 'Main Reroll',    value: 'reroll.main'   },
-            { name: 'One-use Reroll', value: 'reroll.oneUse' },
-            { name: 'Race Safe',      value: 'raceSafe'      },
-          ))
-        .addIntegerOption(o => o.setName('amount').setDescription('จำนวน').setRequired(true).setMinValue(1))
     ),
+
 
   new SlashCommandBuilder()
     .setName('trainer').setDescription('คำสั่งเทรนเนอร์')

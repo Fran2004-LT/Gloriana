@@ -45,6 +45,8 @@ function getTodayReset() {
 function claimDaily(userId) {
   const inv     = getInventory(userId);
   const today   = getTodayReset();
+  // guard — user เก่าอาจไม่มี streak object ใน DB
+  if (!inv.streak) inv.streak = { current: 0, lastClaim: null };
   const lastDay = inv.streak.lastClaim;
 
   // เช็คว่า claim วันนี้แล้วหรือยัง

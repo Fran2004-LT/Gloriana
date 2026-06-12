@@ -13,7 +13,7 @@ const {
 
 async function handleRace(interaction) {
   const sub     = interaction.options.getSubcommand();
-  const guildId = interaction.guildId;
+  const channelId = interaction.channelId;
 
   try {
     // ============================
@@ -22,7 +22,7 @@ async function handleRace(interaction) {
       const grade    = interaction.options.getString('grade');
       const distance = interaction.options.getInteger('distance');
       const distNames = { 8: 'Sprint', 12: 'Mile/Medium', 14: 'Long' };
-      await openSession(guildId, interaction.channelId, track, grade, distance);
+      await openSession(channelId, track, grade, distance);
       await interaction.reply(
         `🏇 **เปิด Session การแข่งแล้ว!**\n` +
         `🏟️ ${track} | ${grade} | ${distNames[distance]} (${distance} เทิร์น)\n\n` +
@@ -35,7 +35,7 @@ async function handleRace(interaction) {
     if (sub === 'register') {
       const position = interaction.options.getString('position');
       const useHill  = interaction.options.getBoolean('hillclear') || false;
-      const session  = getSession(guildId);
+      const session  = getSession(channelId);
       const inv      = await getInventory(interaction.user.id);
       const statusMsgs = [];
 
@@ -53,7 +53,7 @@ async function handleRace(interaction) {
       }
 
       const player = registerPlayer(
-        guildId, interaction.user.id,
+        channelId, interaction.user.id,
         interaction.member?.displayName || interaction.user.username,
         position, { hillCleared }
       );
@@ -71,7 +71,7 @@ async function handleRace(interaction) {
 
     // ============================
     if (sub === 'zone') {
-      const session = getSession(guildId);
+      const session = getSession(channelId);
       const player  = session.players.get(interaction.user.id);
       const inv     = await getInventory(interaction.user.id);
       const name    = interaction.member?.displayName || interaction.user.username;
@@ -98,7 +98,7 @@ async function handleRace(interaction) {
 
       player.zoneUsed = true;
 
-      const { player: updated } = submitScore(guildId, interaction.user.id, best, true, true);
+      const { player: updated } = submitScore(channelId, interaction.user.id, best, true, true);
 
       await interaction.reply(
         `🌀 **${name}** ใช้ **Zone** (${isGold ? '🟡 Gold' : '⚪ White'}) ด้วย \`${notation}\`\n` +
@@ -112,15 +112,15 @@ async function handleRace(interaction) {
     // ============================
     if (sub === 'next') {
       // next() เป็น async แล้วหลังแก้ bug — ต้อง await
-      const result = await next(guildId);
+      const result = await next(channelId);
       if (result.type === 'finished') {
-        const lb      = getLeaderboard(guildId);
-        const session = getSession(guildId);
+        const lb      = getLeaderboard(channelId);
+        const session = getSession(channelId);
         const board   = lb.map(p => `${p.rank}. **${p.displayName}** [${p.position}] — ${p.score} แต้ม`).join('\n');
         if (lb.length > 0) await recordWin(lb[0].userId, session.grade);
         await interaction.reply(`🏁 **การแข่งจบแล้ว!**\n\n🏆 **ผลการแข่ง**\n\n${board}`);
       } else {
-        const session = getSession(guildId);
+        const session = getSession(channelId);
         const prefix  = result.type === 'phase' ? `🔄 **จบเฟส ${result.phase - 1}!**\n\n` : `⏭️ **จบเทิร์น!**\n`;
         await interaction.reply(`${prefix}📍 เฟส ${result.phase} เทิร์น ${result.turn} (${result.totalTurn}/${session.distance})`);
       }
@@ -128,8 +128,8 @@ async function handleRace(interaction) {
 
     // ============================
     if (sub === 'status') {
-      const session = getSession(guildId);
-      const lb      = getLeaderboard(guildId);
+      const session = getSession(channelId);
+      const lb      = getLeaderboard(channelId);
       const board   = lb.map(p => {
         const zone = p.zoneUsed    ? ' 🌀' : '';
         const hill = p.hillCleared ? ' ✅' : '';
@@ -143,33 +143,33 @@ async function handleRace(interaction) {
     }
 
     if (sub === 'finish') {
-      const lb    = getLeaderboard(guildId);
+      const lb    = getLeaderboard(channelId);
       const board = lb.map(p => `${p.rank}. **${p.displayName}** [${p.position}] — ${p.score} แต้ม`).join('\n');
       await interaction.reply(`🏆 **ผลการแข่ง**\n\n${board}`);
     }
 
     if (sub === 'close') {
       try {
-        const s = getSession(guildId);
+        const s = getSession(channelId);
         for (const p of s.players.values()) p.mainRerollCooldown = false;
       } catch {}
       // closeSession() เป็น async แล้วหลังแก้ bug — ต้อง await
-      await closeSession(guildId);
+      await closeSession(channelId);
       await interaction.reply(`🔒 ปิด Session แล้ว`);
     }
 
     // ============================
-    if (sub === 'slow') {
-      const session = getSession(guildId);
+    if (sub === 'slowdown') {
+      const session = getSession(channelId);
       const player  = session.players.get(interaction.user.id);
       if (!player) throw new Error('คุณยังไม่ได้ลงทะเบียนแข่ง');
       if (player.slowedThisTurn) throw new Error('ลดแต้มได้แค่ 1 ครั้งต่อเทิร์น');
 
       const amount    = interaction.options.getInteger('amount');
-      const updated   = adjustScore(guildId, interaction.user.id, amount);
+      const updated   = adjustScore(channelId, interaction.user.id, amount);
       player.slowedThisTurn = true;
 
-      const snapshot   = getTurnSnapshot(guildId);
+      const snapshot   = getTurnSnapshot(channelId);
       const allScores  = snapshot.map(([, s]) => s);
       const myScore    = session.turnSnapshot.get(interaction.user.id) ?? updated.score;
       const mySnapshot = { ...updated, score: myScore };
@@ -179,20 +179,6 @@ async function handleRace(interaction) {
       await interaction.reply(
         `🐢 **${interaction.member?.displayName || interaction.user.username}** ลดแต้ม -${amount}\n` +
         `📊 **${updated.score}** | ${isGold ? '🟡 Gold zone' : '⚪ White zone'}`
-      );
-    }
-
-    if (sub === 'addreroll') {
-      const target     = interaction.options.getUser('target');
-      const type       = interaction.options.getString('type');
-      const amount     = interaction.options.getInteger('amount');
-      const targetName = interaction.guild?.members.cache.get(target.id)?.displayName || target.username;
-      await addItem(target.id, type, amount);
-      const inv   = await getInventory(target.id);
-      const names = { 'reroll.main': 'Main', 'reroll.oneUse': 'One-use', 'raceSafe': 'Race Safe' };
-      await interaction.reply(
-        `✅ +${amount} **${names[type]}** → **${targetName}**\n` +
-        `🔁 ${inv.reroll.main} | ⚡ ${inv.reroll.oneUse} | 🛡️ ${inv.raceSafe}`
       );
     }
 
