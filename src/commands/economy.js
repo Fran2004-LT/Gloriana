@@ -87,12 +87,24 @@ function resolveTargets(interaction) {
 async function handleDaily(interaction) {
   try {
     const { day, rewards, streak } = claimDaily(interaction.user.id);
-    const name = interaction.member?.displayName || interaction.user.username;
-    await interaction.reply(
-      `🌟 **${name}** claim daily แล้ว!\n` +
-      `📅 Day ${day}/7 | ${'⭐'.repeat(streak)}${'☆'.repeat(7 - streak)}\n\n` +
-      `🎁 รางวัลวันนี้:\n${formatRewards(rewards)}`
-    );
+    const name      = interaction.member?.displayName || interaction.user.username;
+    const avatarUrl = interaction.user.displayAvatarURL();
+    const streakBar = `${'⭐'.repeat(streak)}${'☆'.repeat(7 - streak)}`;
+    const rewardText = formatRewards(rewards);
+
+    const embed = new EmbedBuilder()
+      .setColor(0xFFD700)
+      .setAuthor({ name, iconURL: avatarUrl })
+      .setTitle('🌟 Daily Claim!')
+      .addFields(
+        { name: '📅 Streak', value: `Day **${day}**/7
+${streakBar}`, inline: true },
+        { name: '🎁 รางวัลวันนี้', value: rewardText, inline: true }
+      );
+
+    if (day === 7) embed.setFooter({ text: '🎉 ครบ 7 วัน! Streak จะรีเซ็ตในรอบหน้า' });
+
+    await interaction.reply({ embeds: [embed] });
   } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
 }
 

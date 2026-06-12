@@ -1,6 +1,6 @@
 'use strict';
 
-const { ButtonBuilder, ButtonStyle, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
+const { ButtonBuilder, ButtonStyle, ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder } = require('discord.js');
 const { roll }              = require('../dice/diceRoller');
 const { getPlayerNotation, getNotation } = require('../dice/diceTable');
 const { getHillDebuff }     = require('../config/tracks');
@@ -21,6 +21,36 @@ function hasAllowedRole(member) {
 // ============================
 // Helpers
 // ============================
+const ROLL_COLORS = {
+  '🎲': 0x5865F2,  // ทอยปกติ — สีม่วง Discord
+  '🔁': 0x57F287,  // reroll — สีเขียว
+  '🛡️': 0x3498DB,  // safe — สีฟ้า
+  '💥': 0xED4245,  // allout — สีแดง
+  '🔴': 0xED4245,  // debuff — สีแดง
+  '🎯': 0xF5C518,  // trainer reroll — สีทอง
+};
+
+function buildResultEmbed(emoji, label, result, scoreInfo = null) {
+  const color = ROLL_COLORS[emoji] || 0x5865F2;
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(`${emoji} ${label}`)
+    .addFields({ name: `🎲 \`${result.notation}\``, value: `> ${result.display}`, inline: false });
+
+  if (result.modifier !== 0) {
+    embed.addFields({ name: 'Modifier', value: `\`${result.modifier > 0 ? '+' : ''}${result.modifier}\``, inline: true });
+  }
+
+  embed.addFields({ name: 'Total', value: `**${result.total}**`, inline: true });
+
+  if (scoreInfo) {
+    embed.addFields({ name: '📊 คะแนนสะสม', value: scoreInfo, inline: true });
+  }
+
+  return embed;
+}
+
+// keep buildResultLines for backward compat (ใช้ใน debuff/allout text parts)
 function buildResultLines(emoji, label, result, scoreMsg = '') {
   const lines = [`${emoji} **${label}** ทอย \`${result.notation}\``, `> ${result.display}`];
   if (result.modifier !== 0) lines.push(`> Modifier: \`${result.modifier > 0 ? '+' : ''}${result.modifier}\``);
@@ -119,7 +149,7 @@ async function handleRoll(interaction) {
   try {
     const res = await doRoll(interaction.user.id, interaction.member?.displayName, interaction.channelId, notation, label);
     if (res.error) { await interaction.reply({ content: res.error, ephemeral: true }); return; }
-    await interaction.reply({ content: res.lines, components: res.rows });
+    await interaction.reply({ embeds: [res.embed], components: res.rows });
   } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
 }
 
@@ -134,7 +164,7 @@ async function handlePrefixRoll(message) {
   try {
     const res = await doRoll(message.author.id, message.member?.displayName, message.channelId, notation, label);
     if (res.error) { await message.reply(res.error); return; }
-    await message.reply({ content: res.lines, components: res.rows });
+    await message.reply({ embeds: [res.embed], components: res.rows });
   } catch (err) { await message.reply(`❌ ${err.message}`); }
 }
 
@@ -329,12 +359,15 @@ async function handleDebuff(interaction) {
 
     setLastRoll(channelId, target.id, newResult);
 
-    await interaction.reply(
-      `🔴 **${userName}** ใช้สกิลแดงใส่ **${targetName}**!\n` +
-      `> ผลเดิม: ${last.display} → **${last.total}**\n` +
-      `> ผลใหม่: ${newResult.display} → **${newResult.total}**\n\n` +
-      `📊 คะแนนสะสม **${targetName}**: **${player.score}**`
-    );
+    const debuffEmbed = new EmbedBuilder()
+      .setColor(0xED4245)
+      .setTitle(`🔴 ${userName} ใช้สกิลแดงใส่ ${targetName}!`)
+      .addFields(
+        { name: '❌ ผลเดิม', value: `~~${last.display}~~ → ~~${last.total}~~`, inline: true },
+        { name: '✨ ผลใหม่', value: `${newResult.display} → **${newResult.total}**`, inline: true },
+        { name: '📊 คะแนนสะสม', value: `**${player.score}**`, inline: false }
+      );
+    await interaction.reply({ embeds: [debuffEmbed] });
   } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
 }
 
@@ -369,13 +402,16 @@ async function handleAllOut(interaction) {
 
     setLastRoll(channelId, userId, newResult);
 
-    await interaction.reply(
-      `💥 **${name}** ใช้ **All Out** (ครั้งที่ ${n})\n` +
-      `> ~~${last.display} → ${last.total}~~\n` +
-      `> ✨ ${newResult.display} → **${newResult.total}** (-${penalty}) = **${newTotal}**\n\n` +
-      `📊 คะแนนสะสม: **${player.score}**\n` +
-      `⚠️ หลังแข่งจบจะได้รับผลกระทบตามจำนวนครั้งที่ใช้`
-    );
+    const alloutEmbed = new EmbedBuilder()
+      .setColor(0xED4245)
+      .setTitle(`💥 ${name} ใช้ All Out (ครั้งที่ ${n})`)
+      .addFields(
+        { name: '❌ ผลเดิม', value: `~~${last.display} → ${last.total}~~`, inline: true },
+        { name: '✨ ผลใหม่', value: `${newResult.display} → **${newResult.total}** (-${penalty}) = **${newTotal}**`, inline: true },
+        { name: '📊 คะแนนสะสม', value: `**${player.score}**`, inline: false }
+      )
+      .setFooter({ text: '⚠️ หลังแข่งจบจะได้รับผลกระทบตามจำนวนครั้งที่ใช้' });
+    await interaction.reply({ embeds: [alloutEmbed] });
   } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
 }
 
@@ -391,12 +427,15 @@ async function handleTrainerReroll(interaction) {
   try {
     await useItem(interaction.user.id, 'reroll.trainer');
     const { player, newResult, oldResult } = trainerReroll(channelId, target.id, roll);
-    await interaction.reply(
-      `🎯 **${trainerName}** ใช้ Trainer Reroll ให้ **${targetName}**\n` +
-      `> ผลเดิม: ${oldResult.display} → **${oldResult.total}**\n` +
-      `> ผลใหม่: ${newResult.display} → **${newResult.total}**\n\n` +
-      `📊 คะแนนสะสม **${targetName}**: **${player.score}**`
-    );
+    const trainerEmbed = new EmbedBuilder()
+      .setColor(0xF5C518)
+      .setTitle(`🎯 ${trainerName} ใช้ Trainer Reroll ให้ ${targetName}`)
+      .addFields(
+        { name: '❌ ผลเดิม', value: `~~${oldResult.display} → ${oldResult.total}~~`, inline: true },
+        { name: '✨ ผลใหม่', value: `${newResult.display} → **${newResult.total}**`, inline: true },
+        { name: '📊 คะแนนสะสม', value: `**${player.score}**`, inline: false }
+      );
+    await interaction.reply({ embeds: [trainerEmbed] });
   } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
 }
 
