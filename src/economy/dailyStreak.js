@@ -5,7 +5,7 @@
  * Daily streak system — reset ตี 4 ไทย (UTC+7)
  */
 
-const { addItem, getInventory } = require('../inventory/inventoryStore');
+const { addItem, getInventory, saveInventory } = require('../inventory/inventoryStore');
 
 // รางวัลแต่ละวัน
 const STREAK_REWARDS = {
@@ -42,7 +42,7 @@ function getTodayReset() {
  * Claim daily streak
  * return { success, day, rewards, streak }
  */
-function claimDaily(userId) {
+async function claimDaily(userId) {
   const inv     = getInventory(userId);
   const today   = getTodayReset();
   // guard — user เก่าอาจไม่มี streak object ใน DB
@@ -74,6 +74,9 @@ function claimDaily(userId) {
   for (const r of rewards) {
     addItem(userId, r.type, r.amount);
   }
+
+  // บันทึก streak ลง DB
+  await saveInventory(userId);
 
   return { success: true, day, rewards, streak: inv.streak.current };
 }

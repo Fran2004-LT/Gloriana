@@ -86,7 +86,7 @@ function resolveTargets(interaction) {
 // ============================
 async function handleDaily(interaction) {
   try {
-    const { day, rewards, streak } = claimDaily(interaction.user.id);
+    const { day, rewards, streak } = await claimDaily(interaction.user.id);
     const name      = interaction.member?.displayName || interaction.user.username;
     const avatarUrl = interaction.user.displayAvatarURL();
     const streakBar = `${'⭐'.repeat(streak)}${'☆'.repeat(7 - streak)}`;
