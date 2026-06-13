@@ -43,7 +43,7 @@ function getTodayReset() {
  * return { success, day, rewards, streak }
  */
 async function claimDaily(userId) {
-  const inv     = getInventory(userId);
+  const inv     = await getInventory(userId);
   const today   = getTodayReset();
   // guard — user เก่าอาจไม่มี streak object ใน DB
   if (!inv.streak) inv.streak = { current: 0, lastClaim: null };
@@ -70,12 +70,16 @@ async function claimDaily(userId) {
   const day     = inv.streak.current;
   const rewards = STREAK_REWARDS[day] || STREAK_REWARDS[1];
 
-  // ให้รางวัล
+  // บวกรางวัลเข้า inv โดยตรง ไม่ผ่าน addItem เพื่อไม่ให้ cache ถูก clear กลางทาง
   for (const r of rewards) {
-    addItem(userId, r.type, r.amount);
+    if (r.type === 'gold')            inv.gold += r.amount;
+    else if (r.type === 'rc')         inv.rc   += r.amount;
+    else if (r.type === 'raceSafe')   inv.raceSafe += r.amount;
+    else if (r.type === 'reroll.oneUse') inv.reroll.oneUse += r.amount;
+    else if (r.type === 'reroll.main')   inv.reroll.main   += r.amount;
   }
 
-  // บันทึก streak ลง DB
+  // บันทึกทุกอย่างลง DB ในครั้งเดียว (streak + รางวัล)
   await saveInventory(userId);
 
   return { success: true, day, rewards, streak: inv.streak.current };
