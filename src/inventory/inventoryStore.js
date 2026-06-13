@@ -2,7 +2,7 @@
 
 const { getInventoryDB, saveInventoryDB } = require('../db');
 
-// cache in-memory ระหว่าง session เพื่อลด DB calls
+// cache in-memory — เก็บเฉพาะ session ปัจจุบัน
 const cache = new Map();
 
 async function getInventory(userId) {
@@ -15,7 +15,11 @@ async function getInventory(userId) {
 
 async function saveInventory(userId) {
   const inv = cache.get(userId);
-  if (inv) await saveInventoryDB(userId, inv);
+  if (inv) {
+    await saveInventoryDB(userId, inv);
+    // clear cache หลัง save เพื่อให้ครั้งถัดไปดึงจาก DB ใหม่เสมอ
+    cache.delete(userId);
+  }
 }
 
 /**
