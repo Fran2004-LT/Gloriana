@@ -209,7 +209,11 @@ async function handleGift(interaction) {
         `🎁 **${staffName}** มอบ **${itemLabel}${amountStr}** ให้ **${targets.length} คน** แล้ว`
       );
     }
-  } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
+  } catch (err) {
+    const msg = { content: `❌ ${err.message}`, ephemeral: true };
+    if (interaction.deferred) await interaction.editReply(msg);
+    else await interaction.reply(msg);
+  }
 }
 
 // ============================
