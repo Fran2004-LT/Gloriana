@@ -62,12 +62,13 @@ function buildInventoryEmbed(name, inv, avatarUrl) {
 // Helper: ดึง members จาก user หรือ role
 // return [{ id, displayName }]
 // ============================
-function resolveTargets(interaction) {
+async function resolveTargets(interaction) {
   const user = interaction.options.getUser('target');
   const role = interaction.options.getRole('role');
 
   if (role) {
-    // ดึงทุกคนใน role
+    // fetch ทุกคนใน guild ก่อนเพื่อให้ cache ครบ แล้วค่อย filter ด้วย role
+    await interaction.guild?.members.fetch();
     const members = interaction.guild?.roles.cache.get(role.id)?.members;
     if (!members || members.size === 0) return [];
     return members.map(m => ({ id: m.id, displayName: m.displayName }));
@@ -151,7 +152,7 @@ async function handleGive(interaction) {
   const names     = { gold: '💰 Gold', rc: '🌈 RC' };
 
   try {
-    const targets = resolveTargets(interaction);
+    const targets = await resolveTargets(interaction);
     if (targets.length === 0) throw new Error('ไม่พบผู้รับ');
 
     for (const t of targets) addItem(t.id, type, amount);
@@ -188,7 +189,7 @@ async function handleGift(interaction) {
   };
 
   try {
-    const targets = resolveTargets(interaction);
+    const targets = await resolveTargets(interaction);
     if (targets.length === 0) throw new Error('ไม่พบผู้รับ');
 
     for (const t of targets) addItem(t.id, type, amount);
