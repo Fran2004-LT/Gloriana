@@ -132,14 +132,15 @@ async function doRoll(userId, displayName, channelId, notation, label) {
     }
   }
 
-  const lines = buildResultLines('🎲', label, result, scoreMsg);
+  const scoreInfo = scoreMsg.replace(/\n📊 คะแนนสะสม: /, '').trim() || null;
+  const embed = buildResultEmbed('🎲', label, result, scoreInfo || undefined);
   let safeCount;
   if (channelId && hasSession(channelId) && grade === 'Debut') {
     const s = getSession(channelId);
     safeCount = s.players.get(userId)?.debutSafeCount ?? 0;
   }
   const rows  = (channelId && hasSession(channelId)) ? buildActionRow(notation, label, canSafe, grade, userId, safeCount) : [];
-  return { lines, rows };
+  return { embed, rows };
 }
 
 // ============================
