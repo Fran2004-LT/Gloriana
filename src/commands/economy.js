@@ -67,9 +67,9 @@ async function resolveTargets(interaction) {
   const role = interaction.options.getRole('role');
 
   if (role) {
-    // fetch ทุกคนใน guild ก่อนเพื่อให้ cache ครบ แล้วค่อย filter ด้วย role
-    await interaction.guild?.members.fetch();
-    const members = interaction.guild?.roles.cache.get(role.id)?.members;
+    // fetch เฉพาะ members ที่มี role นี้ ไม่ต้อง fetch ทั้ง guild
+    const fetched = await interaction.guild?.members.fetch({ force: false });
+    const members = fetched?.filter(m => m.roles.cache.has(role.id));
     if (!members || members.size === 0) return [];
     return members.map(m => ({ id: m.id, displayName: m.displayName }));
   }
