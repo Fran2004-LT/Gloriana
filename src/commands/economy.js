@@ -189,6 +189,7 @@ async function handleGift(interaction) {
   };
 
   try {
+    await interaction.deferReply();
     const targets = await resolveTargets(interaction);
     if (targets.length === 0) throw new Error('ไม่พบผู้รับ');
 
@@ -200,11 +201,11 @@ async function handleGift(interaction) {
     if (targets.length === 1) {
       const inv = await getInventory(targets[0].id);
       const summary = `🔁 ${inv.reroll.main} | ⚡ ${inv.reroll.oneUse} | 🎯 ${inv.reroll.trainer} | 🛡️ ${inv.raceSafe} | 🏔️ ${inv.hillClearItem ? 'มี' : 'ไม่มี'} | 🌀 ${inv.zoneUnlocked ? 'Unlocked' : 'Locked'}`;
-      await interaction.reply(
+      await interaction.editReply(
         `🎁 **${staffName}** มอบ **${itemLabel}${amountStr}** ให้ **${targets[0].displayName}**\n${summary}`
       );
     } else {
-      await interaction.reply(
+      await interaction.editReply(
         `🎁 **${staffName}** มอบ **${itemLabel}${amountStr}** ให้ **${targets.length} คน** แล้ว`
       );
     }
