@@ -155,7 +155,7 @@ async function handleGive(interaction) {
     const targets = await resolveTargets(interaction);
     if (targets.length === 0) throw new Error('ไม่พบผู้รับ');
 
-    for (const t of targets) addItem(t.id, type, amount);
+    for (const t of targets) await addItem(t.id, type, amount);
 
     if (targets.length === 1) {
       const inv = await getInventory(targets[0].id);
@@ -193,7 +193,7 @@ async function handleGift(interaction) {
     const targets = await resolveTargets(interaction);
     if (targets.length === 0) throw new Error('ไม่พบผู้รับ');
 
-    for (const t of targets) addItem(t.id, type, amount);
+    for (const t of targets) await addItem(t.id, type, amount);
 
     const itemLabel = itemNames[type] || type;
     const amountStr = type !== 'hillClearItem' && type !== 'zoneUnlock' ? ` ×${amount}` : '';
