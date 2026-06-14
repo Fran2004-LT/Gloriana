@@ -67,10 +67,17 @@ async function resolveTargets(interaction) {
   const role = interaction.options.getRole('role');
 
   if (role) {
-    // fetch เฉพาะ members ที่มี role นี้ ไม่ต้อง fetch ทั้ง guild
-    const fetched = await interaction.guild?.members.fetch({ force: false });
-    const members = fetched?.filter(m => m.roles.cache.has(role.id));
-    if (!members || members.size === 0) return [];
+    // ใช้แค่ cache ที่มีอยู่แล้ว ไม่ fetch เพิ่ม
+    const members = interaction.guild?.roles.cache.get(role.id)?.members;
+    if (!members || members.size === 0) {
+      // ถ้า cache ว่าง ลอง fetch เฉพาะ role นี้
+      try {
+        await interaction.guild?.members.fetch({ withPresences: false, limit: 1000 });
+        const retried = interaction.guild?.roles.cache.get(role.id)?.members;
+        if (!retried || retried.size === 0) return [];
+        return retried.map(m => ({ id: m.id, displayName: m.displayName }));
+      } catch { return []; }
+    }
     return members.map(m => ({ id: m.id, displayName: m.displayName }));
   }
 
