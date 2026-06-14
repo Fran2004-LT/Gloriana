@@ -107,7 +107,8 @@ function applyKeep(rolls, keep) {
 function formatDisplay(chosen, dropped) {
   const chosenStr  = chosen.map(n => `${n}`);
   const droppedStr = dropped.map(n => `~~${n}~~`);
-  return [...chosenStr, ...droppedStr].join(', ');
+  const parts = [...chosenStr, ...droppedStr];
+  return parts.length > 0 ? parts.join(', ') : '0';
 }
 
 /**

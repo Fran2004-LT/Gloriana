@@ -31,20 +31,22 @@ const ROLL_COLORS = {
 };
 
 function buildResultEmbed(emoji, label, result, scoreInfo = null) {
-  const color = ROLL_COLORS[emoji] || 0x5865F2;
-  const embed = new EmbedBuilder()
+  const color   = ROLL_COLORS[emoji] || 0x5865F2;
+  // guard — Discord ไม่ยอมรับ field value ที่ว่าง
+  const display = result.display || String(result.total);
+  const embed   = new EmbedBuilder()
     .setColor(color)
     .setTitle(`${emoji} ${label}`)
-    .addFields({ name: `🎲 \`${result.notation}\``, value: `> ${result.display}`, inline: false });
+    .addFields({ name: `🎲 \`${result.notation}\``, value: `> ${display}`, inline: false });
 
-  if (result.modifier !== 0) {
+  if (result.modifier && result.modifier !== 0) {
     embed.addFields({ name: 'Modifier', value: `\`${result.modifier > 0 ? '+' : ''}${result.modifier}\``, inline: true });
   }
 
   embed.addFields({ name: 'Total', value: `**${result.total}**`, inline: true });
 
-  if (scoreInfo) {
-    embed.addFields({ name: '📊 คะแนนสะสม', value: scoreInfo, inline: true });
+  if (scoreInfo && scoreInfo.trim()) {
+    embed.addFields({ name: '📊 คะแนนสะสม', value: scoreInfo.trim(), inline: true });
   }
 
   return embed;
