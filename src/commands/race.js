@@ -1,10 +1,11 @@
 'use strict';
 
 const { EmbedBuilder } = require('discord.js');
-const { getInventory, addItem, recordWin } = require('../inventory/inventoryStore');
+const { getInventory, addItem, recordWin, resetTrainingItems } = require('../inventory/inventoryStore');
 const { getPlayerNotation }  = require('../dice/diceTable');
 const { getHillDebuff }      = require('../config/tracks');
 const { roll }               = require('../dice/diceRoller');
+const { handleProxy, handleUnproxy } = require('./roll');
 const {
   openSession, registerPlayer, adjustScore,
   submitScore,
@@ -54,6 +55,9 @@ function buildLeaderboardEmbed(session, lb, title, closed = false) {
 async function handleRace(interaction) {
   const sub     = interaction.options.getSubcommand();
   const channelId = interaction.channelId;
+
+  if (sub === 'proxy')   return handleProxy(interaction);
+  if (sub === 'unproxy') return handleUnproxy(interaction);
 
   try {
     // ============================
@@ -137,6 +141,9 @@ async function handleRace(interaction) {
       const worst = r1.total <  r2.total ? r1 : r2;
 
       player.zoneUsed = true;
+      // จำเทิร์นที่ใช้ zone เพื่อกัน debuff ในเทิร์นเดียวกัน
+      const sessionZ = getSession(channelId);
+      player.zoneUsedTurn = sessionZ.totalTurn;
 
       const { player: updated } = submitScore(channelId, interaction.user.id, best, true, true);
 
@@ -186,6 +193,10 @@ async function handleRace(interaction) {
         const s  = getSession(channelId);
         const lb = getLeaderboard(channelId);
         for (const p of s.players.values()) p.mainRerollCooldown = false;
+        // ล้าง hill clear + zone unlock ของทุกคนใน session — ต้องฝึกใหม่
+        for (const uid of s.players.keys()) {
+          await resetTrainingItems(uid).catch(e => console.error('[resetTrainingItems]', e));
+        }
         const embed = buildLeaderboardEmbed(s, lb, '🔒 ปิด Session — ผลการแข่งสุดท้าย', true);
         await closeSession(channelId);
         await interaction.reply({ embeds: [embed] });

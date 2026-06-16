@@ -96,6 +96,15 @@ async function unlockZone(userId) {
   return inv;
 }
 
+async function resetTrainingItems(userId) {
+  // ล้าง hill clear และ zone unlock หลังแข่งจบ — ต้องฝึกใหม่ทุกครั้ง
+  const inv = await getInventory(userId);
+  inv.hillClearItem = false;
+  inv.zoneUnlocked  = false;
+  await saveInventory(userId);
+  return inv;
+}
+
 async function recordWin(userId, grade) {
   const inv = await getInventory(userId);
   if (grade === 'G1') { inv.stats.g1Wins++; await addItem(userId, 'reroll.main', 1); }
@@ -109,5 +118,5 @@ async function recordWin(userId, grade) {
 module.exports = {
   getInventory, saveInventory,
   addItem, useItem,
-  setRole, unlockZone, recordWin,
+  setRole, unlockZone, recordWin, resetTrainingItems,
 };

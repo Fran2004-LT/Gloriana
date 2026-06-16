@@ -32,6 +32,53 @@ function calcPhaseAndTurn(totalTurn, structure) {
 // in-memory store (loaded from DB on startup)
 const sessions  = new Map();
 const lastRolls = new Map();
+// proxy: key = `${channelId}:${proxyUserId}` → ownerUserId ที่ถูกสวมสิทธิ์
+const proxies   = new Map();
+
+// ตั้ง proxy: proxyUser สวมสิทธิ์แทน owner
+function setProxy(channelId, proxyUserId, ownerUserId) {
+  const session = getSession(channelId);
+  if (!session.players.has(ownerUserId)) throw new Error('ม้าที่จะสวมสิทธิ์ยังไม่ได้ลงทะเบียนในการแข่งนี้');
+  proxies.set(`${channelId}:${proxyUserId}`, ownerUserId);
+}
+
+// ยกเลิก proxy ทั้งหมดที่สวมสิทธิ์ owner คนนี้ (owner เป็นคนเรียกคืน)
+function clearProxyByOwner(channelId, ownerUserId) {
+  let removed = false;
+  for (const [key, owner] of proxies.entries()) {
+    if (key.startsWith(`${channelId}:`) && owner === ownerUserId) {
+      proxies.delete(key);
+      removed = true;
+    }
+  }
+  return removed;
+}
+
+// เช็คว่า user คนนี้กำลัง proxy แทนใครอยู่ใน channel นี้ (คืน ownerId หรือ null)
+function getProxyOwner(channelId, proxyUserId) {
+  return proxies.get(`${channelId}:${proxyUserId}`) || null;
+}
+// proxy: key = `${channelId}:${ownerId}` -> proxyUserId (คนที่ทอยแทน)
+const proxyMap = new Map();
+
+function setProxy(channelId, ownerId, proxyUserId) {
+  proxyMap.set(`${channelId}:${ownerId}`, proxyUserId);
+}
+function removeProxy(channelId, ownerId) {
+  proxyMap.delete(`${channelId}:${ownerId}`);
+}
+function getProxyOwner(channelId, proxyUserId) {
+  // หาว่า proxyUserId กำลังทอยแทนใครอยู่ใน channel นี้
+  for (const [key, pid] of proxyMap.entries()) {
+    if (pid === proxyUserId && key.startsWith(`${channelId}:`)) {
+      return key.split(':')[1];
+    }
+  }
+  return null;
+}
+function getProxyForOwner(channelId, ownerId) {
+  return proxyMap.get(`${channelId}:${ownerId}`) || null;
+}
 
 // =================== Persistence helpers ===================
 
@@ -271,6 +318,8 @@ function getLeaderboard(channelId) {
 }
 
 module.exports = {
+  setProxy, clearProxyByOwner, getProxyOwner,
+  setProxy, removeProxy, getProxyOwner, getProxyForOwner,
   restoreSessionsFromDB,
   setLastRoll,
   openSession, registerPlayer,

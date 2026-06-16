@@ -8,10 +8,19 @@ const { getInventory, useItem } = require('../inventory/inventoryStore');
 const {
   submitScore, getSession, hasSession, getTurnSnapshot,
   trainerReroll, getLastRoll, setLastRoll,
+  setProxy, clearProxyByOwner, getProxyOwner,
 } = require('../race/raceSession');
 
 // Staff/Assistant role IDs
 const ALLOWED_ROLES = ['1441679665893740614', '1506298098224332850'];
+const TRAINER_ROLE  = '1441818898990366861';
+// Staff / Assistant / Trainer ใช้ proxy ได้
+const PROXY_ROLES = [...ALLOWED_ROLES, TRAINER_ROLE];
+
+function canUseProxy(member) {
+  if (!member) return false;
+  return PROXY_ROLES.some(id => member.roles.cache.has(id));
+}
 
 function hasAllowedRole(member) {
   if (!member) return false;
@@ -110,6 +119,18 @@ function checkNotation(channelId, userId, notation) {
 }
 
 async function doRoll(userId, displayName, channelId, notation, label) {
+  // ถ้า userId กำลัง proxy แทนใครอยู่ → ทอยในนามของ owner
+  let effectiveUserId = userId;
+  if (channelId && hasSession(channelId)) {
+    const owner = getProxyOwner(channelId, userId);
+    if (owner) {
+      effectiveUserId = owner;
+      const s = getSession(channelId);
+      const ownerName = s.players.get(owner)?.displayName;
+      if (ownerName) label = ownerName;
+    }
+  }
+  userId = effectiveUserId;
   const result = roll(notation);
   let scoreMsg = '';
   let canSafe  = false;
@@ -124,8 +145,7 @@ async function doRoll(userId, displayName, channelId, notation, label) {
       const session2 = getSession(channelId);
       grade = session2.grade;
       const { player, canSafe: cs } = submitScore(channelId, userId, result, false, false);
-      const tier = check ? (check.isGold ? '🟡' : '⚪') : '';
-      scoreMsg = `\n📊 คะแนนสะสม: **${player.score}** ${tier}`;
+      scoreMsg = `\n📊 คะแนนสะสม: **${player.score}**`;
       canSafe  = cs;
     } catch (e) {
       return { error: `❌ ${e.message}` };
@@ -345,6 +365,10 @@ async function handleDebuff(interaction) {
     const player = session.players.get(target.id);
     if (!player) throw new Error('ผู้เล่นเป้าหมายไม่ได้อยู่ใน session นี้');
     if (!player.rolled) throw new Error(`**${targetName}** ยังไม่ได้ทอยในเทิร์นนี้`);
+    // กัน debuff คนที่ใช้ zone ในเทิร์นนี้ — ผล zone ห้ามถูก reroll ทับ
+    if (player.zoneUsedTurn === session.totalTurn) {
+      throw new Error(`**${targetName}** ใช้ Zone ในเทิร์นนี้แล้ว ไม่สามารถยิงสกิลแดงได้`);
+    }
 
     const last = getLastRoll(channelId, target.id);
     if (!last) throw new Error('ไม่พบผลล่าสุดของ target');
@@ -442,9 +466,44 @@ async function handleTrainerReroll(interaction) {
   } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
 }
 
+async function handleProxy(interaction) {
+  const channelId = interaction.channelId;
+  const target    = interaction.options.getUser('target');
+  const proxyName = interaction.member?.displayName || interaction.user.username;
+  const targetName = interaction.guild?.members.cache.get(target.id)?.displayName || target.username;
+
+  try {
+    if (!canUseProxy(interaction.member)) throw new Error('เฉพาะ Staff / Assistant / Trainer เท่านั้นที่ใช้ proxy ได้');
+    if (!hasSession(channelId)) throw new Error('ไม่มี session การแข่งในช่องนี้');
+    if (target.id === interaction.user.id) throw new Error('สวมสิทธิ์ตัวเองไม่ได้');
+
+    setProxy(channelId, interaction.user.id, target.id);
+
+    const embed = new EmbedBuilder()
+      .setColor(0x9B59B6)
+      .setTitle('🎭 สวมสิทธิ์ทอยแทน')
+      .setDescription(`**${proxyName}** จะทอยแทน **${targetName}** ชั่วคราว`)
+      .setFooter({ text: 'ทอยได้ปกติ แต่ใช้ reroll/safe/zone/สกิลแดงไม่ได้ — เจ้าของกด /race unproxy เพื่อเอาสิทธิ์คืน' });
+    await interaction.reply({ embeds: [embed] });
+  } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
+}
+
+async function handleUnproxy(interaction) {
+  const channelId = interaction.channelId;
+  const name = interaction.member?.displayName || interaction.user.username;
+  try {
+    if (!hasSession(channelId)) throw new Error('ไม่มี session การแข่งในช่องนี้');
+    // เจ้าของม้าเท่านั้นที่เรียกสิทธิ์คืนได้
+    const removed = clearProxyByOwner(channelId, interaction.user.id);
+    if (!removed) throw new Error('ไม่มีใครกำลังสวมสิทธิ์คุณอยู่');
+    await interaction.reply(`🔓 **${name}** เรียกสิทธิ์ควบคุมคืนแล้ว`);
+  } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
+}
+
 module.exports = {
   handleRoll, handlePrefixRoll,
   handleRerollSelect, handleDoReroll, handleCancelReroll, handleSafe,
   handleDebuff, handleAllOut, handleTrainerReroll,
+  handleProxy, handleUnproxy,
   hasAllowedRole,
 };
