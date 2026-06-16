@@ -83,6 +83,13 @@ const commands = [
     .addSubcommand(s =>
       s.setName('slowdown').setDescription('ลดแต้มตัวเอง (1-10)')
         .addIntegerOption(o => o.setName('amount').setDescription('จำนวน').setRequired(true).setMinValue(1).setMaxValue(10))
+    )
+    .addSubcommand(s =>
+      s.setName('proxy').setDescription('สวมสิทธิ์ทอยแทนม้า (Staff/Assistant/Trainer)')
+        .addUserOption(o => o.setName('target').setDescription('ม้าที่จะทอยแทน').setRequired(true))
+    )
+    .addSubcommand(s =>
+      s.setName('unproxy').setDescription('ดึงสิทธิ์ควบคุมม้าของคุณคืน')
     ),
 
 
