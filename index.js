@@ -90,6 +90,9 @@ const commands = [
     )
     .addSubcommand(s =>
       s.setName('unproxy').setDescription('ดึงสิทธิ์ควบคุมม้าของคุณคืน')
+    )
+    .addSubcommand(s =>
+      s.setName('redo').setDescription('เรียกผลทอยล่าสุดมา reroll/safe โดยไม่ต้องเลื่อนหา')
     ),
 
 

@@ -359,9 +359,6 @@ async function handleDebuff(interaction) {
     if (!hasSession(channelId)) throw new Error('ไม่มี session การแข่งอยู่');
     const session = getSession(channelId);
 
-    const selfPlayer = session.players.get(interaction.user.id);
-    if (selfPlayer?.mainRerollCooldown === true) throw new Error('Main Reroll อยู่ใน Cooldown — รอแข่งจบ');
-
     const player = session.players.get(target.id);
     if (!player) throw new Error('ผู้เล่นเป้าหมายไม่ได้อยู่ใน session นี้');
     if (!player.rolled) throw new Error(`**${targetName}** ยังไม่ได้ทอยในเทิร์นนี้`);
@@ -374,8 +371,6 @@ async function handleDebuff(interaction) {
     if (!last) throw new Error('ไม่พบผลล่าสุดของ target');
 
     await useItem(interaction.user.id, 'reroll.main');
-
-    if (selfPlayer) selfPlayer.mainRerollCooldown = true;
 
     // ใช้ turnSnapshot เป็น base แทนการคำนวณ score - last.total
     // เพราะ snapshot คือคะแนน ณ ต้นเทิร์น ก่อนที่จะทอยเทิร์นนี้
@@ -466,6 +461,36 @@ async function handleTrainerReroll(interaction) {
   } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
 }
 
+async function handleRedo(interaction) {
+  const channelId = interaction.channelId;
+  const userId    = interaction.user.id;
+  const name      = interaction.member?.displayName || interaction.user.username;
+
+  try {
+    if (!hasSession(channelId)) throw new Error('ไม่มี session การแข่งในช่องนี้');
+    const session = getSession(channelId);
+    const player  = session.players.get(userId);
+    if (!player) throw new Error('คุณยังไม่ได้ลงทะเบียนแข่ง');
+
+    const last = getLastRoll(channelId, userId);
+    if (!last) throw new Error('ยังไม่มีผลทอยล่าสุดให้ redo');
+
+    const grade = session.grade;
+    // canSafe: ผลล่าสุดมีลูกที่อยู่ 1-10 (สำหรับ Main Safe ของ Debut)
+    const canSafe = Array.isArray(last.chosen) && last.chosen.some(n => n >= 1 && n <= 10);
+    let safeCount;
+    if (grade === 'Debut') safeCount = player.debutSafeCount ?? 0;
+
+    // สร้าง dropdown เดียวกับที่ติดมากับผลทอยปกติ
+    const rows = buildActionRow(last.notation, name, canSafe, grade, userId, safeCount);
+
+    await interaction.reply({
+      content: `🔄 **${name}** เลือกประเภทเพื่อ redo ผลล่าสุด \`${last.notation}\` (${last.display} → **${last.total}**)`,
+      components: rows,
+    });
+  } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
+}
+
 async function handleProxy(interaction) {
   const channelId = interaction.channelId;
   const target    = interaction.options.getUser('target');
@@ -504,6 +529,6 @@ module.exports = {
   handleRoll, handlePrefixRoll,
   handleRerollSelect, handleDoReroll, handleCancelReroll, handleSafe,
   handleDebuff, handleAllOut, handleTrainerReroll,
-  handleProxy, handleUnproxy,
+  handleProxy, handleUnproxy, handleRedo,
   hasAllowedRole,
 };

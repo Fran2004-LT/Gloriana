@@ -38,8 +38,6 @@ async function addItem(userId, type, amount) {
   else if (type === 'reroll.trainer') inv.reroll.trainer += amount;
   else throw new Error(`Unknown item type: ${type}`);
 
-  if (type === 'reroll.main' && inv.reroll.main < 1) inv.reroll.main = 1;
-
   await saveInventory(userId);
   return inv;
 }
@@ -60,7 +58,6 @@ async function useItem(userId, type, amount = 1) {
   if (type === 'reroll.main') {
     if (current <= 0) throw new Error('ไม่มี Main Reroll เหลือแล้ว');
     inv.reroll.main--;
-    if (inv.reroll.main < 1) inv.reroll.main = 1; // ขั้นต่ำ 1 เสมอ
     await saveInventory(userId);
     return inv;
   }

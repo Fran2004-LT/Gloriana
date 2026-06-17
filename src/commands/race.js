@@ -5,7 +5,7 @@ const { getInventory, addItem, recordWin, resetTrainingItems } = require('../inv
 const { getPlayerNotation }  = require('../dice/diceTable');
 const { getHillDebuff }      = require('../config/tracks');
 const { roll }               = require('../dice/diceRoller');
-const { handleProxy, handleUnproxy } = require('./roll');
+const { handleProxy, handleUnproxy, handleRedo } = require('./roll');
 const {
   openSession, registerPlayer, adjustScore,
   submitScore,
@@ -58,6 +58,7 @@ async function handleRace(interaction) {
 
   if (sub === 'proxy')   return handleProxy(interaction);
   if (sub === 'unproxy') return handleUnproxy(interaction);
+  if (sub === 'redo')    return handleRedo(interaction);
 
   try {
     // ============================
@@ -192,7 +193,6 @@ async function handleRace(interaction) {
       try {
         const s  = getSession(channelId);
         const lb = getLeaderboard(channelId);
-        for (const p of s.players.values()) p.mainRerollCooldown = false;
         // ล้าง hill clear + zone unlock ของทุกคนใน session — ต้องฝึกใหม่
         for (const uid of s.players.keys()) {
           await resetTrainingItems(uid).catch(e => console.error('[resetTrainingItems]', e));

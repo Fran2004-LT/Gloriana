@@ -264,7 +264,6 @@ async function next(channelId) {
   session.isFirstTurn = false;
 
   if (session.totalTurn >= session.distance) {
-    for (const p of session.players.values()) p.mainRerollCooldown = false;
     session.status = 'finished';
     await persistSession(channelId);
     return { type: 'finished', phase: session.phase, turn: session.turn, totalTurn: session.totalTurn };
