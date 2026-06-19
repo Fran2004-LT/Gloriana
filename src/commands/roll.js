@@ -159,8 +159,7 @@ async function doRoll(userId, displayName, channelId, notation, label) {
     const s = getSession(channelId);
     safeCount = s.players.get(userId)?.debutSafeCount ?? 0;
   }
-  const rows  = (channelId && hasSession(channelId)) ? buildActionRow(notation, label, canSafe, grade, userId, safeCount) : [];
-  return { embed, rows };
+  return { embed };
 }
 
 // ============================
@@ -172,7 +171,7 @@ async function handleRoll(interaction) {
   try {
     const res = await doRoll(interaction.user.id, interaction.member?.displayName, interaction.channelId, notation, label);
     if (res.error) { await interaction.reply({ content: res.error, ephemeral: true }); return; }
-    await interaction.reply({ embeds: [res.embed], components: res.rows });
+    await interaction.reply({ embeds: [res.embed] });
   } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
 }
 
@@ -187,7 +186,7 @@ async function handlePrefixRoll(message) {
   try {
     const res = await doRoll(message.author.id, message.member?.displayName, message.channelId, notation, label);
     if (res.error) { await message.reply(res.error); return; }
-    await message.reply({ embeds: [res.embed], components: res.rows });
+    await message.reply({ embeds: [res.embed] });
   } catch (err) { await message.reply(`❌ ${err.message}`); }
 }
 
@@ -259,15 +258,10 @@ async function handleDoReroll(interaction) {
       } catch { }
     }
 
-    const lines = buildResultLines('🔁', label, result, scoreMsg);
+    const scoreInfo = scoreMsg.replace(/\n📊 คะแนนสะสม: /, '').trim() || null;
+    const embed = buildResultEmbed('🔁', label, result, scoreInfo || undefined);
     await interaction.update({ content: '🔁 Rerolling...', components: [] });
-    let safeCount2;
-    if (channelId && hasSession(channelId) && grade === 'Debut') {
-      const s2 = getSession(channelId);
-      safeCount2 = s2.players.get(ownerId)?.debutSafeCount ?? 0;
-    }
-    const rows = (channelId && hasSession(channelId)) ? buildActionRow(notation, label, canSafe, grade, ownerId, safeCount2) : [];
-    await interaction.followUp({ content: lines, components: rows });
+    await interaction.followUp({ embeds: [embed] });
 
   } catch (err) { await interaction.update({ content: `❌ ${err.message}`, components: [] }); }
 }
@@ -333,10 +327,10 @@ async function handleSafe(interaction) {
       } catch { }
     }
 
-    const lines = buildResultLines('🛡️', `${label} Safe`, result, scoreMsg);
+    const scoreInfo = scoreMsg.replace(/\n📊 คะแนนสะสม: /, '').trim() || null;
+    const embed = buildResultEmbed('🛡️', `${label} Safe`, result, scoreInfo || undefined);
     await interaction.update({ content: `🛡️ **${label}** ใช้ Safe...`, components: [] });
-    const rows = (channelId && hasSession(channelId)) ? buildActionRow(notation, label, canSafe, grade, ownerId, safeCount) : [];
-    await interaction.followUp({ content: lines, components: rows });
+    await interaction.followUp({ embeds: [embed] });
 
   } catch (err) { await interaction.update({ content: `❌ ${err.message}`, components: [] }); }
 }
@@ -485,7 +479,9 @@ async function handleRedo(interaction) {
     const rows = buildActionRow(last.notation, name, canSafe, grade, userId, safeCount);
 
     await interaction.reply({
-      content: `🔄 **${name}** เลือกประเภทเพื่อ redo ผลล่าสุด \`${last.notation}\` (${last.display} → **${last.total}**)`,
+      content: `🔄 **${name}** เลือกประเภทเพื่อ redo\n` +
+               `🎲 ผลล่าสุด \`${last.notation}\`: ${last.display} → **${last.total}**\n` +
+               `📊 คะแนนสะสม: **${player.score}**`,
       components: rows,
     });
   } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
