@@ -82,7 +82,7 @@ function buildActionRow(notation, label, canSafe, grade, userId, safeCount) {
   }
 
   const select = new StringSelectMenuBuilder()
-    .setCustomId(`rerollSelect:${notation}:${label}:${userId}`)
+    .setCustomId(`rerollSelect:${notation}:${userId}`)
     .setPlaceholder('🔁 เลือกประเภท Reroll')
     .addOptions(options);
   rows.push(new ActionRowBuilder().addComponents(select));
@@ -91,7 +91,7 @@ function buildActionRow(notation, label, canSafe, grade, userId, safeCount) {
   if (canSafe && grade === 'Debut') {
     const remaining = safeCount !== undefined ? safeCount : '?';
     const safeBtn = new ButtonBuilder()
-      .setCustomId(`safe:${notation}:${label}:${userId}`)
+      .setCustomId(`safe:${notation}:${userId}`)
       .setLabel(`🛡️ Main Safe (${remaining}/3)`)
       .setStyle(ButtonStyle.Primary);
     rows.push(new ActionRowBuilder().addComponents(safeBtn));
@@ -195,13 +195,14 @@ async function handlePrefixRoll(message) {
 // ============================
 async function handleRerollSelect(interaction) {
   const parts = interaction.customId.split(':');
-  const [, notation, label, ownerId] = parts;
+  const [, notation, ownerId] = parts;
   const type  = interaction.values[0];
 
   if (interaction.user.id !== ownerId) {
     await interaction.reply({ content: '❌ นี่ไม่ใช่ผลทอยของคุณ', ephemeral: true });
     return;
   }
+  const label = interaction.member?.displayName || interaction.user.username;
 
   const names = { main: 'Main', oneUse: 'One-use', raceSafe: 'Race Safe' };
   const inv   = await getInventory(interaction.user.id);
@@ -213,7 +214,7 @@ async function handleRerollSelect(interaction) {
   }
 
   const yesBtn = new ButtonBuilder()
-    .setCustomId(`doReroll:${notation}:${label}:${type}:${ownerId}`)
+    .setCustomId(`doReroll:${notation}:${type}:${ownerId}`)
     .setLabel('✅ Yes').setStyle(ButtonStyle.Success);
   const noBtn = new ButtonBuilder()
     .setCustomId(`cancelReroll:${ownerId}`)
@@ -230,8 +231,9 @@ async function handleRerollSelect(interaction) {
 // doReroll button
 // ============================
 async function handleDoReroll(interaction) {
-  const [, notation, label, type, ownerId] = interaction.customId.split(':');
+  const [, notation, type, ownerId] = interaction.customId.split(':');
   const channelId = interaction.channelId;
+  const label = interaction.member?.displayName || interaction.user.username;
 
   if (interaction.user.id !== ownerId) {
     await interaction.reply({ content: '❌ นี่ไม่ใช่ผลทอยของคุณ', ephemeral: true });
@@ -279,13 +281,14 @@ async function handleCancelReroll(interaction) {
 // Safe button
 // ============================
 async function handleSafe(interaction) {
-  const [, notation, label, ownerId] = interaction.customId.split(':');
+  const [, notation, ownerId] = interaction.customId.split(':');
   const channelId = interaction.channelId;
 
   if (interaction.user.id !== ownerId) {
     await interaction.reply({ content: '❌ นี่ไม่ใช่ผลทอยของคุณ', ephemeral: true });
     return;
   }
+  const label = interaction.member?.displayName || interaction.user.username;
 
   try {
     let grade  = null;

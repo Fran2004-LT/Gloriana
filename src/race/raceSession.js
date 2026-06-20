@@ -58,28 +58,6 @@ function clearProxyByOwner(channelId, ownerUserId) {
 function getProxyOwner(channelId, proxyUserId) {
   return proxies.get(`${channelId}:${proxyUserId}`) || null;
 }
-// proxy: key = `${channelId}:${ownerId}` -> proxyUserId (คนที่ทอยแทน)
-const proxyMap = new Map();
-
-function setProxy(channelId, ownerId, proxyUserId) {
-  proxyMap.set(`${channelId}:${ownerId}`, proxyUserId);
-}
-function removeProxy(channelId, ownerId) {
-  proxyMap.delete(`${channelId}:${ownerId}`);
-}
-function getProxyOwner(channelId, proxyUserId) {
-  // หาว่า proxyUserId กำลังทอยแทนใครอยู่ใน channel นี้
-  for (const [key, pid] of proxyMap.entries()) {
-    if (pid === proxyUserId && key.startsWith(`${channelId}:`)) {
-      return key.split(':')[1];
-    }
-  }
-  return null;
-}
-function getProxyForOwner(channelId, ownerId) {
-  return proxyMap.get(`${channelId}:${ownerId}`) || null;
-}
-
 // =================== Persistence helpers ===================
 
 /**
@@ -318,7 +296,6 @@ function getLeaderboard(channelId) {
 
 module.exports = {
   setProxy, clearProxyByOwner, getProxyOwner,
-  setProxy, removeProxy, getProxyOwner, getProxyForOwner,
   restoreSessionsFromDB,
   setLastRoll,
   openSession, registerPlayer,
