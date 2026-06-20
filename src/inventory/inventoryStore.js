@@ -98,6 +98,8 @@ async function resetTrainingItems(userId) {
   const inv = await getInventory(userId);
   inv.hillClearItem = false;
   inv.zoneUnlocked  = false;
+  // คืน Main Reroll เป็นค่าฐาน = 1 + จำนวนครั้งที่ชนะ G1 (โบนัสถาวร)
+  inv.reroll.main = 1 + (inv.stats?.g1Wins || 0);
   await saveInventory(userId);
   return inv;
 }
