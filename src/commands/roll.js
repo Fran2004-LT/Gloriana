@@ -412,12 +412,12 @@ async function handleAllOut(interaction) {
     const n       = player.allOutCount;
     const penalty = n * 10;
 
-    // ใช้ turnSnapshot เป็น base เหมือน debuff
-    const snapshot = session.turnSnapshot.get(userId) ?? 0;
-
+    // หัก penalty จากคะแนนสะสมก่อน แล้วบวกผลทอยใหม่เข้า
+    const snapshot  = session.turnSnapshot.get(userId) ?? 0;
     const newResult = roll(last.notation);
-    const newTotal  = Math.max(0, newResult.total - penalty);
-    player.score    = snapshot + newTotal;
+    const scoreBeforeThisTurn = snapshot; // คะแนนก่อนเทิร์นนี้
+    player.score = Math.max(0, scoreBeforeThisTurn - penalty) + newResult.total;
+    const newTotal = player.score - scoreBeforeThisTurn;
 
     setLastRoll(channelId, userId, newResult);
 
