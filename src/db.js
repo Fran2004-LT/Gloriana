@@ -47,6 +47,43 @@ async function initDB() {
     )
   `);
 
+  // ข้อมูลตัวละคร: 1 Discord user = 1 สาวม้า, trainer_id = Discord user ของเทรนเนอร์
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS characters (
+      user_id    TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      trainer_id TEXT DEFAULT NULL,
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  // ความสัมพันธ์ตามลอร์ (เก็บคู่แบบเรียง user_a < user_b เพื่อไม่ให้ซ้ำ)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS relationships (
+      user_a TEXT NOT NULL,
+      user_b TEXT NOT NULL,
+      type   TEXT NOT NULL,
+      PRIMARY KEY (user_a, user_b, type)
+    )
+  `);
+
+  // บทฝึก — เก็บใน DB แล้ว รหัส TRN ไม่รีเซ็ตตอน restart
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS train_submissions (
+      id            SERIAL PRIMARY KEY,
+      status        TEXT NOT NULL DEFAULT 'pending',
+      type          TEXT NOT NULL,
+      uma_id        TEXT NOT NULL,
+      partner_id    TEXT DEFAULT NULL,
+      trainer_id    TEXT DEFAULT NULL,
+      location      TEXT,
+      link          TEXT,
+      submitted_by  TEXT,
+      reject_reason TEXT,
+      submitted_at  TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
   console.log('✅ Database ready');
 }
 
@@ -224,8 +261,114 @@ function buildDefault(userId) {
   };
 }
 
+// =================== Characters & Relationships ===================
+
+async function getCharacterDB(userId) {
+  const res = await pool.query('SELECT * FROM characters WHERE user_id = $1', [userId]);
+  if (!res.rows.length) return null;
+  const r = res.rows[0];
+  return { userId: r.user_id, name: r.name, trainerId: r.trainer_id };
+}
+
+async function setCharacterDB(userId, name, trainerId) {
+  await pool.query(`
+    INSERT INTO characters (user_id, name, trainer_id, updated_at) VALUES ($1, $2, $3, NOW())
+    ON CONFLICT (user_id) DO UPDATE SET name = $2, trainer_id = $3, updated_at = NOW()
+  `, [userId, name, trainerId]);
+}
+
+async function deleteCharacterDB(userId) {
+  await pool.query('DELETE FROM characters WHERE user_id = $1', [userId]);
+  await pool.query('DELETE FROM relationships WHERE user_a = $1 OR user_b = $1', [userId]);
+}
+
+async function getTeamDB(trainerId) {
+  const res = await pool.query('SELECT user_id, name FROM characters WHERE trainer_id = $1 ORDER BY name', [trainerId]);
+  return res.rows.map(r => ({ userId: r.user_id, name: r.name }));
+}
+
+function orderPair(a, b) { return a < b ? [a, b] : [b, a]; }
+
+async function addRelationshipDB(a, b, type) {
+  const [x, y] = orderPair(a, b);
+  const res = await pool.query(
+    'INSERT INTO relationships (user_a, user_b, type) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+    [x, y, type]
+  );
+  return res.rowCount > 0;
+}
+
+async function removeRelationshipDB(a, b, type) {
+  const [x, y] = orderPair(a, b);
+  const res = await pool.query(
+    'DELETE FROM relationships WHERE user_a = $1 AND user_b = $2 AND type = $3', [x, y, type]
+  );
+  return res.rowCount > 0;
+}
+
+async function getRelationshipsBetweenDB(a, b) {
+  const [x, y] = orderPair(a, b);
+  const res = await pool.query('SELECT type FROM relationships WHERE user_a = $1 AND user_b = $2', [x, y]);
+  return res.rows.map(r => r.type);
+}
+
+async function listRelationshipsDB(userId) {
+  const res = await pool.query(
+    'SELECT user_a, user_b, type FROM relationships WHERE user_a = $1 OR user_b = $1 ORDER BY type',
+    [userId]
+  );
+  return res.rows.map(r => ({ otherId: r.user_a === userId ? r.user_b : r.user_a, type: r.type }));
+}
+
+// =================== Train submissions ===================
+
+function rowToSubmission(r) {
+  return {
+    id: `TRN-${String(r.id).padStart(4, '0')}`,
+    status: r.status, type: r.type,
+    umaId: r.uma_id, partnerId: r.partner_id, trainerId: r.trainer_id,
+    location: r.location, link: r.link, submittedBy: r.submitted_by,
+    rejectReason: r.reject_reason, submittedAt: r.submitted_at,
+  };
+}
+
+function parseSubmissionId(id) {
+  const n = parseInt(String(id).replace(/^TRN-?/i, ''), 10);
+  if (!Number.isInteger(n) || n <= 0) throw new Error(`รหัสไม่ถูกต้อง: ${id}`);
+  return n;
+}
+
+async function createSubmissionDB(d) {
+  const res = await pool.query(`
+    INSERT INTO train_submissions (type, uma_id, partner_id, trainer_id, location, link, submitted_by)
+    VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *
+  `, [d.type, d.umaId, d.partnerId || null, d.trainerId || null, d.location, d.link, d.submittedBy]);
+  return rowToSubmission(res.rows[0]);
+}
+
+/** เปลี่ยนสถานะจาก pending เท่านั้น (atomic — กันกด approve ซ้ำ) */
+async function settleSubmissionDB(id, status, reason = null) {
+  const n   = parseSubmissionId(id);
+  const res = await pool.query(`
+    UPDATE train_submissions SET status = $2, reject_reason = $3
+    WHERE id = $1 AND status = 'pending' RETURNING *
+  `, [n, status, reason]);
+  if (res.rows.length) return rowToSubmission(res.rows[0]);
+  const exists = await pool.query('SELECT status FROM train_submissions WHERE id = $1', [n]);
+  if (!exists.rows.length) throw new Error(`ไม่พบบทฝึก ${id}`);
+  throw new Error(`บทฝึก ${id} ถูกจัดการไปแล้ว (${exists.rows[0].status})`);
+}
+
+async function listPendingSubmissionsDB() {
+  const res = await pool.query("SELECT * FROM train_submissions WHERE status = 'pending' ORDER BY id");
+  return res.rows.map(rowToSubmission);
+}
+
 module.exports = {
   pool,
+  getCharacterDB, setCharacterDB, deleteCharacterDB, getTeamDB,
+  addRelationshipDB, removeRelationshipDB, getRelationshipsBetweenDB, listRelationshipsDB,
+  createSubmissionDB, settleSubmissionDB, listPendingSubmissionsDB,
   initDB,
   getInventoryDB,
   saveInventoryDB,

@@ -9,6 +9,7 @@ const {
   submitScore, getSession, hasSession, getTurnSnapshot,
   trainerReroll, getLastRoll, setLastRoll,
   setProxy, clearProxyByOwner, getProxyOwner,
+  getSessionRerolls, useSessionReroll, useRedSkill, RED_SKILL_BASE,
 } = require('../race/raceSession');
 
 // Staff/Assistant role IDs
@@ -69,12 +70,15 @@ function buildResultLines(emoji, label, result, scoreMsg = '') {
   return lines.join('\n');
 }
 
-function buildActionRow(notation, label, canSafe, grade, userId, safeCount) {
+function buildActionRow(notation, label, canSafe, grade, userId, safeCount, g1Left = 0) {
   const rows    = [];
   const options = [
-    { label: '🔁 Main Reroll',    description: 'reroll หลัก',  value: 'main'   },
-    { label: '⚡ One-use Reroll', description: 'ใช้แล้วหมดไป', value: 'oneUse' },
+    { label: '🔁 Main Reroll',    description: '1 ครั้งต่อการแข่ง',      value: 'main'   },
   ];
+  if (g1Left > 0) {
+    options.push({ label: '🏆 G1 Reroll', description: `จากการชนะ G1 (เหลือ ${g1Left})`, value: 'g1' });
+  }
+  options.push({ label: '⚡ One-use Reroll', description: 'ได้จากการฝึก ใช้แล้วหมดไป', value: 'oneUse' });
 
   // G1/G2/G3 → Race Safe อยู่ใน dropdown
   if (grade && grade !== 'Debut') {
@@ -204,11 +208,21 @@ async function handleRerollSelect(interaction) {
   }
   const label = interaction.member?.displayName || interaction.user.username;
 
-  const names = { main: 'Main', oneUse: 'One-use', raceSafe: 'Race Safe' };
+  const names = { main: 'Main', g1: 'G1', oneUse: 'One-use', raceSafe: 'Race Safe' };
   const inv   = await getInventory(interaction.user.id);
-  const count = type === 'main' ? inv.reroll.main : type === 'oneUse' ? inv.reroll.oneUse : inv.raceSafe;
+  let count;
+  if (type === 'main' || type === 'g1') {
+    // Main / G1 นับใน session — ต้องอยู่ในการแข่ง
+    count = getSessionRerolls(interaction.channelId, interaction.user.id, type);
+    if (count === null) {
+      await interaction.reply({ content: `❌ ${names[type]} Reroll ใช้ได้เฉพาะระหว่างการแข่ง`, ephemeral: true });
+      return;
+    }
+  } else {
+    count = type === 'oneUse' ? inv.reroll.oneUse : inv.raceSafe;
+  }
 
-  if (type !== 'main' && count <= 0) {
+  if (count <= 0) {
     await interaction.reply({ content: `❌ ไม่มี **${names[type]}** เหลือแล้ว`, ephemeral: true });
     return;
   }
@@ -222,7 +236,7 @@ async function handleRerollSelect(interaction) {
 
   await interaction.update({ content: interaction.message.content, components: [] });
   await interaction.followUp({
-    content: `**${interaction.member?.displayName || interaction.user.username}** จะใช้ **${names[type]}** มั้ย?${type !== 'main' ? ` (เหลือ ${count})` : ''}`,
+    content: `**${interaction.member?.displayName || interaction.user.username}** จะใช้ **${names[type]}** มั้ย? (เหลือ ${count})`,
     components: [new ActionRowBuilder().addComponents(yesBtn, noBtn)],
   });
 }
@@ -241,8 +255,15 @@ async function handleDoReroll(interaction) {
   }
 
   try {
-    const itemMap = { main: 'reroll.main', oneUse: 'reroll.oneUse', raceSafe: 'raceSafe' };
-    await useItem(interaction.user.id, itemMap[type] || type);
+    if (type === 'main' || type === 'g1') {
+      // Main / G1 หักใน session เท่านั้น ไม่แตะ DB
+      if (!hasSession(channelId)) throw new Error('Reroll นี้ใช้ได้เฉพาะระหว่างการแข่ง');
+      useSessionReroll(channelId, interaction.user.id, type);
+    } else {
+      const itemMap = { oneUse: 'reroll.oneUse', raceSafe: 'raceSafe' };
+      if (!itemMap[type]) throw new Error('ประเภท reroll ไม่ถูกต้อง');
+      await useItem(interaction.user.id, itemMap[type]);
+    }
 
     const result = roll(notation);
     let scoreMsg = '';
@@ -339,54 +360,28 @@ async function handleSafe(interaction) {
 }
 
 // ============================
-// Debuff skill (สกิลแดง)
+// 🔴 Red Skill (สกิลแดง) — 1 ครั้งต่อการแข่ง, สุ่มเป้าหมาย
 // ============================
 async function handleDebuff(interaction) {
-  const channelId  = interaction.channelId;
-  const target     = interaction.options.getUser('target');
-  const targetName = interaction.guild?.members.cache.get(target.id)?.displayName || target.username;
-  const userName   = interaction.member?.displayName || interaction.user.username;
-
-  if (target.id === interaction.user.id) {
-    await interaction.reply({ content: '❌ ไม่สามารถใช้สกิลแดงกับตัวเองได้', ephemeral: true });
-    return;
-  }
+  const channelId = interaction.channelId;
+  const userName  = interaction.member?.displayName || interaction.user.username;
 
   try {
     if (!hasSession(channelId)) throw new Error('ไม่มี session การแข่งอยู่');
-    const session = getSession(channelId);
+    const { target, oldRoll, newRoll, turnScore, base } = useRedSkill(channelId, interaction.user.id, roll);
 
-    const player = session.players.get(target.id);
-    if (!player) throw new Error('ผู้เล่นเป้าหมายไม่ได้อยู่ใน session นี้');
-    if (!player.rolled) throw new Error(`**${targetName}** ยังไม่ได้ทอยในเทิร์นนี้`);
-    // กัน debuff คนที่ใช้ zone ในเทิร์นนี้ — ผล zone ห้ามถูก reroll ทับ
-    if (player.zoneUsedTurn === session.totalTurn) {
-      throw new Error(`**${targetName}** ใช้ Zone ในเทิร์นนี้แล้ว ไม่สามารถยิงสกิลแดงได้`);
-    }
-
-    const last = getLastRoll(channelId, target.id);
-    if (!last) throw new Error('ไม่พบผลล่าสุดของ target');
-
-    await useItem(interaction.user.id, 'reroll.main');
-
-    // ใช้ turnSnapshot เป็น base แทนการคำนวณ score - last.total
-    // เพราะ snapshot คือคะแนน ณ ต้นเทิร์น ก่อนที่จะทอยเทิร์นนี้
-    const snapshot = session.turnSnapshot.get(target.id) ?? 0;
-
-    const newResult = roll(last.notation);
-    player.score    = snapshot + newResult.total;
-
-    setLastRoll(channelId, target.id, newResult);
-
-    const debuffEmbed = new EmbedBuilder()
+    const redEmbed = new EmbedBuilder()
       .setColor(0xED4245)
-      .setTitle(`🔴 ${userName} ใช้สกิลแดงใส่ ${targetName}!`)
+      .setTitle(`🔴 ${userName} ใช้สกิลแดง!`)
+      .setDescription(`🎯 ระบบสุ่มเป้าหมาย → **${target.displayName}**`)
       .addFields(
-        { name: '❌ ผลเดิม', value: `~~${last.display}~~ → ~~${last.total}~~`, inline: true },
-        { name: '✨ ผลใหม่', value: `${newResult.display} → **${newResult.total}**`, inline: true },
-        { name: '📊 คะแนนสะสม', value: `**${player.score}**`, inline: false }
-      );
-    await interaction.reply({ embeds: [debuffEmbed] });
+        { name: '❌ ผลเดิม (ยกเลิก)', value: `~~${oldRoll.display} → ${oldRoll.total}~~`, inline: true },
+        { name: '🎲 ทอยใหม่', value: `\`${newRoll.notation}\`: ${newRoll.display} → ${newRoll.total}`, inline: true },
+        { name: '🔻 หัก Base Score', value: `${newRoll.total} − ${base} = **${turnScore}**`, inline: false },
+        { name: '📊 คะแนนสะสมของเป้าหมาย', value: `**${target.score}**`, inline: false }
+      )
+      .setFooter({ text: `สกิลแดงของ ${userName} ถูกใช้แล้วในการแข่งนี้` });
+    await interaction.reply({ embeds: [redEmbed] });
   } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
 }
 
@@ -479,12 +474,15 @@ async function handleRedo(interaction) {
     if (grade === 'Debut') safeCount = player.debutSafeCount ?? 0;
 
     // สร้าง dropdown เดียวกับที่ติดมากับผลทอยปกติ
-    const rows = buildActionRow(last.notation, name, canSafe, grade, userId, safeCount);
+    const g1Left = getSessionRerolls(channelId, userId, 'g1') || 0;
+    const rows = buildActionRow(last.notation, name, canSafe, grade, userId, safeCount, g1Left);
 
     await interaction.reply({
       content: `🔄 **${name}** เลือกประเภทเพื่อ redo\n` +
                `🎲 ผลล่าสุด \`${last.notation}\`: ${last.display} → **${last.total}**\n` +
-               `📊 คะแนนสะสม: **${player.score}**`,
+               `📊 คะแนนสะสม: **${player.score}**\n` +
+               `🔁 Main: ${getSessionRerolls(channelId, userId, 'main')}` +
+               (g1Left > 0 ? ` | 🏆 G1: ${g1Left}` : ''),
       components: rows,
     });
   } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }

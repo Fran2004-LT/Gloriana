@@ -98,15 +98,15 @@ async function resetTrainingItems(userId) {
   const inv = await getInventory(userId);
   inv.hillClearItem = false;
   inv.zoneUnlocked  = false;
-  // คืน Main Reroll เป็นค่าฐาน = 1 + จำนวนครั้งที่ชนะ G1 (โบนัสถาวร)
-  inv.reroll.main = 1 + (inv.stats?.g1Wins || 0);
+  // Main / G1 Reroll นับใน session แล้ว ไม่ต้องคืนค่าใน DB
   await saveInventory(userId);
   return inv;
 }
 
 async function recordWin(userId, grade) {
   const inv = await getInventory(userId);
-  if (grade === 'G1') { inv.stats.g1Wins++; await addItem(userId, 'reroll.main', 1); }
+  // ชนะ G1 → G1 Reroll เพิ่ม 1 ถาวร (นับจาก g1Wins ตอนลงทะเบียนแข่ง)
+  if (grade === 'G1') inv.stats.g1Wins++;
   else if (grade === 'G2') inv.stats.g2Wins++;
   else if (grade === 'G3') inv.stats.g3Wins++;
   inv.stats.races++;

@@ -2,26 +2,26 @@
 
 /**
  * diceTable.js
- * Dice table v3.1 + White/Gold logic
+ * Dice table v3.3 + White/Gold logic
  * Gold zone threshold: ≤9 แต้ม
  */
 
 const GOLD_THRESHOLD = 9;
 
-// White dice table [position][phase 1-4]
+// White dice table v3.3 [position][phase 1-4]
 const WHITE = {
-  Front: ['d30', '3d30', '4d30', '2d30'],
-  Pace:  ['d30', '2d30', '2d30', '2d30'],
+  Front: ['d30', '2d30', '3d30', '2d30'],
+  Pace:  ['d30', '2d30', '2d30', '3d30'],
   Late:  ['d30', '2d30', '3d30', '2d30'],
-  End:   ['d30', '2d30', '7d30', 'd30' ],
+  End:   ['d30', '2d30', '6d30', 'd30' ],
 };
 
-// Gold dice table [position][phase 1-4]
+// Gold dice table v3.3 [position][phase 1-4]
 const GOLD = {
-  Front: ['3d30',     '4d30',     '3d30',     'd30'     ],
+  Front: ['3d30',     '3d30',     '3d30',     'd30'     ],
   Pace:  ['3d30kh2',  '6d30kh2',  '6d30kh2',  '6d30kh3' ],
-  Late:  ['2d30kh1',  '4d30kh2',  '8d30kh3',  '3d30'    ],
-  End:   ['d30',      'd30',      '5d30',      '3d30'    ],
+  Late:  ['d30',      '6d30kh2',  '8d30kh3',  '3d30'    ],
+  End:   ['d30',      'd30',      '6d30',     '3d30'    ],
 };
 
 /**

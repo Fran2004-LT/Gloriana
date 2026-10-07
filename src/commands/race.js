@@ -100,7 +100,7 @@ async function handleRace(interaction) {
       const player = registerPlayer(
         channelId, interaction.user.id,
         interaction.member?.displayName || interaction.user.username,
-        position, { hillCleared }
+        position, { hillCleared, g1Wins: inv.stats?.g1Wins || 0 }
       );
 
       // Debut ใช้ debutSafeCount ใน session แล้ว ไม่ต้องเพิ่ม raceSafe ใน inventory
@@ -108,7 +108,9 @@ async function handleRace(interaction) {
       const extra = statusMsgs.length ? `\n${statusMsgs.join('\n')}` : '';
       await interaction.reply(
         `✅ **${player.displayName}** ลงทะเบียนสาย **${player.position}** แล้ว!\n` +
-        `👥 ${session.players.size} คน | 🔁 Main: 1` +
+        `👥 ${session.players.size} คน | 🔁 Main: ${player.mainRerollsLeft ?? 1}` +
+        ((player.g1RerollsLeft || 0) > 0 ? ` | 🏆 G1 Reroll: ${player.g1RerollsLeft}` : '') +
+        ` | ⚡ One-use: ${inv.reroll.oneUse}` +
         (session.grade === 'Debut' ? ` | 🛡️ Race Safe: 3` : '') +
         extra + `\nทอยด้วย \`!r\` หรือ \`/roll\` ได้เลย!`
       );

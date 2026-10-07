@@ -2,134 +2,136 @@
 
 /**
  * trainSystem.js
- * ระบบส่งบทฝึก + approve/reject
+ * ระบบส่งบทฝึก + approve/reject (เก็บใน DB — รหัส TRN ไม่รีเซ็ตตอน restart)
  *
  * train-submit  → 1511602866631217173  (ผู้เล่นส่ง + รับผลกลับ)
  * train-review  → 1498223895227138158  (สตาฟ private)
+ *
+ * รางวัล:
+ *  - สาวม้า: ⚡ One-use Reroll +1 ถ้าฝึกกับคนที่มีความสัมพันธ์ (สูงสุด +1 ต่อการฝึก)
+ *  - เทรนเนอร์: 🎯 Trainer Reroll จากการฝึก
+ *  - ฝึกคนเดียว: 🛡️ Race Safe +1
  */
 
-const { addItem } = require('../inventory/inventoryStore');
+const { addItem }           = require('../inventory/inventoryStore');
+const { checkTrainingBond } = require('../character/relations');
+const db                    = require('../db');
 
 const CHANNELS = {
   submit: '1511602866631217173',
   review: '1498223895227138158',
 };
 
-// pending submissions: submitId → data
-const pending = new Map();
-let nextId = 1;
-
-/**
- * ประเภทการฝึก → รางวัล
- */
-const TRAIN_REWARDS = {
-  solo: {                          // ฝึกคนเดียว/ไม่มีเทรนเนอร์
-    uma:     [{ type: 'raceSafe',        amount: 1 }],
-    trainer: [],
-  },
-  withTrainer: {                   // คุยกับเทรนเนอร์ 3 บรรทัด + 3 เทิร์น
-    uma:     [{ type: 'reroll.trainer',  amount: 1 }],
-    trainer: [{ type: 'reroll.trainer',  amount: 1 }],
-  },
-  group: {                         // ฝึกคู่/กลุ่ม (มีเทรนเนอร์)
-    uma:     [{ type: 'reroll.trainer',  amount: 2 }],
-    trainer: [{ type: 'reroll.trainer',  amount: 2 }],
-  },
-  hillClear: {                     // ล้าง hill debuff Nakayama
-    uma:     [],
-    trainer: [],
-    special: 'hillClear',
-  },
-  zoneUnlock: {                    // unlock Zone G1
-    uma:     [],
-    trainer: [],
-    special: 'zoneUnlock',
-  },
+const TYPE_NAMES = {
+  solo:        'ฝึกคนเดียว',
+  withTrainer: 'ฝึกกับเทรนเนอร์',
+  group:       'ฝึกกับสาวม้าคนอื่น',
+  hillClear:   'ล้าง Hill Debuff',
+  zoneUnlock:  'Unlock Zone',
 };
 
+// รางวัลเทรนเนอร์ตามประเภท (ถ้ามีเทรนเนอร์ร่วมฝึก)
+const TRAINER_REWARD = { withTrainer: 1, group: 2 };
+
 /**
- * สร้าง submission ใหม่
+ * ตรวจข้อมูลก่อนสร้าง — คืนข้อความ error หรือ null
  */
-function createSubmission(data) {
-  const id = `TRN-${String(nextId++).padStart(4, '0')}`;
-  pending.set(id, {
-    id,
-    status:      'pending',
-    trainerId:   data.trainerId,
-    trainerName: data.trainerName,
-    umaId:       data.umaId,
-    umaName:     data.umaName,
-    type:        data.type,       // solo/withTrainer/group/hillClear/zoneUnlock
-    location:    data.location,
-    link:        data.link,
-    submittedBy: data.submittedBy,
-    submittedAt: new Date().toISOString(),
-    reviewMsgId: null,   // message ID ใน train-review
-    submitMsgId: null,   // message ID ใน train-submit
-  });
-  return pending.get(id);
+function validateSubmission({ type, umaId, partnerId, trainerId }) {
+  if (!TYPE_NAMES[type]) return 'ประเภทการฝึกไม่ถูกต้อง';
+  if (type === 'withTrainer' && !trainerId) return 'ฝึกกับเทรนเนอร์ต้องระบุ `trainer`';
+  if (type === 'group' && !partnerId)       return 'ฝึกกับสาวม้าคนอื่นต้องระบุ `partner`';
+  if (partnerId && partnerId === umaId)     return 'partner ต้องเป็นคนอื่น ไม่ใช่ตัวเอง';
+  if (trainerId && trainerId === umaId)     return 'trainer ต้องเป็นคนอื่น ไม่ใช่ตัวเอง';
+  return null;
+}
+
+async function createSubmission(data) {
+  const err = validateSubmission(data);
+  if (err) throw new Error(err);
+  return db.createSubmissionDB(data);
 }
 
 /**
- * approve submission
- * return { submission, umaRewards, trainerRewards, special }
+ * คำนวณรางวัลของบทฝึก (ยังไม่แจกของ)
+ * @returns {Promise<Array<{ userId, role, items: {type,amount}[], reasons?: string[], noCharacter?: boolean }>>}
  */
-function approveSubmission(id) {
-  const sub = pending.get(id);
-  if (!sub) throw new Error(`ไม่พบ submission ${id}`);
-  if (sub.status !== 'pending') throw new Error(`submission ${id} ถูกจัดการไปแล้ว`);
+async function computeRewards(sub) {
+  const out = [];
 
-  sub.status = 'approved';
+  if (sub.type === 'solo') {
+    out.push({ userId: sub.umaId, role: 'uma', items: [{ type: 'raceSafe', amount: 1 }] });
+    return out;
+  }
+  if (sub.type === 'hillClear') {
+    out.push({ userId: sub.umaId, role: 'uma', items: [{ type: 'hillClearItem', amount: 1 }] });
+    return out;
+  }
+  if (sub.type === 'zoneUnlock') {
+    out.push({ userId: sub.umaId, role: 'uma', items: [{ type: 'zoneUnlock', amount: 1 }] });
+    return out;
+  }
 
-  const rewardSet     = TRAIN_REWARDS[sub.type] || TRAIN_REWARDS.solo;
-  const umaRewards     = rewardSet.uma     || [];
-  const trainerRewards = rewardSet.trainer || [];
-  const special        = rewardSet.special || null;
+  // withTrainer / group → สาวม้าทุกคนในบทฝึกเช็คความสัมพันธ์ของตัวเอง (สูงสุด +1 ต่อคน)
+  const umas = [sub.umaId, sub.partnerId].filter(Boolean);
+  for (const umaId of umas) {
+    const partnerId = umaId === sub.umaId ? sub.partnerId : sub.umaId;
+    const bond = await checkTrainingBond(umaId, { trainerId: sub.trainerId, partnerId });
+    out.push({
+      userId: umaId, role: 'uma',
+      items: bond.qualifies ? [{ type: 'reroll.oneUse', amount: 1 }] : [],
+      reasons: bond.reasons, noCharacter: bond.noCharacter,
+    });
+  }
 
-  // ให้รางวัล
-  for (const r of umaRewards)     addItem(sub.umaId,     r.type, r.amount);
-  for (const r of trainerRewards) addItem(sub.trainerId, r.type, r.amount);
-
-  return { submission: sub, umaRewards, trainerRewards, special };
+  if (sub.trainerId && TRAINER_REWARD[sub.type]) {
+    out.push({ userId: sub.trainerId, role: 'trainer', items: [{ type: 'reroll.trainer', amount: TRAINER_REWARD[sub.type] }] });
+  }
+  return out;
 }
 
 /**
- * reject submission
+ * approve → เปลี่ยนสถานะ (atomic) แล้วแจกรางวัล
  */
-function rejectSubmission(id, reason = '') {
-  const sub = pending.get(id);
-  if (!sub) throw new Error(`ไม่พบ submission ${id}`);
-  if (sub.status !== 'pending') throw new Error(`submission ${id} ถูกจัดการไปแล้ว`);
-  sub.status = 'rejected';
-  sub.rejectReason = reason;
-  return sub;
+async function approveSubmission(id) {
+  const sub     = await db.settleSubmissionDB(id, 'approved');
+  const rewards = await computeRewards(sub);
+  for (const r of rewards) {
+    for (const it of r.items) await addItem(r.userId, it.type, it.amount);
+  }
+  return { submission: sub, rewards };
 }
 
-function getSubmission(id) {
-  return pending.get(id) || null;
+async function rejectSubmission(id, reason = '') {
+  return db.settleSubmissionDB(id, 'rejected', reason || null);
 }
 
-function getPendingList() {
-  return [...pending.values()].filter(s => s.status === 'pending');
+async function getPendingList() {
+  return db.listPendingSubmissionsDB();
 }
 
 /**
  * format รางวัลเป็น string
  */
-function formatRewards(rewards) {
-  if (!rewards.length) return 'ไม่มีรางวัล';
-  const names = {
-    'raceSafe':        '🛡️ Race Safe',
-    'reroll.trainer':  '🎯 Trainer Reroll',
-    'reroll.oneUse':   '⚡ One-use Reroll',
-    'reroll.main':     '🔁 Main Reroll',
-  };
-  return rewards.map(r => `${names[r.type] || r.type} +${r.amount}`).join('\n');
+const ITEM_NAMES = {
+  'raceSafe':       '🛡️ Race Safe',
+  'reroll.trainer': '🎯 Trainer Reroll',
+  'reroll.oneUse':  '⚡ One-use Reroll',
+  'hillClearItem':  '🏔️ Hill Clear',
+  'zoneUnlock':     '🌀 Zone Unlock',
+};
+
+function formatItems(items) {
+  if (!items.length) return 'ไม่มีรางวัล';
+  return items.map(i =>
+    (i.type === 'hillClearItem' || i.type === 'zoneUnlock')
+      ? ITEM_NAMES[i.type]
+      : `${ITEM_NAMES[i.type] || i.type} +${i.amount}`
+  ).join(', ');
 }
 
 module.exports = {
-  CHANNELS, TRAIN_REWARDS,
-  createSubmission, approveSubmission, rejectSubmission,
-  getSubmission, getPendingList,
-  formatRewards,
+  CHANNELS, TYPE_NAMES, TRAINER_REWARD,
+  validateSubmission, createSubmission, computeRewards,
+  approveSubmission, rejectSubmission, getPendingList,
+  formatItems,
 };

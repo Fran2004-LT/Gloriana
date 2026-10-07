@@ -27,7 +27,8 @@ function buildInventoryEmbed(name, inv, avatarUrl) {
       {
         name: '🎲 Rerolls',
         value: [
-          `🔁 Main Reroll: **${inv.reroll.main}**`,
+          `🔁 Main Reroll: **1** / การแข่ง`,
+          `🏆 G1 Reroll: **${inv.stats.g1Wins}** / การแข่ง`,
           `⚡ One-use Reroll: **${inv.reroll.oneUse}**`,
           `🎯 Trainer Reroll: **${inv.reroll.trainer}**`,
         ].join('\n'),
@@ -180,7 +181,6 @@ async function handleGift(interaction) {
   const staffName = interaction.member?.displayName || interaction.user.username;
 
   const itemNames = {
-    'reroll.main':    '🔁 Main Reroll',
     'reroll.oneUse':  '⚡ One-use Reroll',
     'reroll.trainer': '🎯 Trainer Reroll',
     'raceSafe':       '🛡️ Race Safe',
@@ -200,7 +200,7 @@ async function handleGift(interaction) {
 
     if (targets.length === 1) {
       const inv = await getInventory(targets[0].id);
-      const summary = `🔁 ${inv.reroll.main} | ⚡ ${inv.reroll.oneUse} | 🎯 ${inv.reroll.trainer} | 🛡️ ${inv.raceSafe} | 🏔️ ${inv.hillClearItem ? 'มี' : 'ไม่มี'} | 🌀 ${inv.zoneUnlocked ? 'Unlocked' : 'Locked'}`;
+      const summary = `⚡ ${inv.reroll.oneUse} | 🎯 ${inv.reroll.trainer} | 🛡️ ${inv.raceSafe} | 🏔️ ${inv.hillClearItem ? 'มี' : 'ไม่มี'} | 🌀 ${inv.zoneUnlocked ? 'Unlocked' : 'Locked'}`;
       await interaction.editReply(
         `🎁 **${staffName}** มอบ **${itemLabel}${amountStr}** ให้ **${targets[0].displayName}**\n${summary}`
       );
@@ -231,16 +231,17 @@ async function handleTransfer(interaction) {
   }
 
   try {
-    const fromInv = getInventory(interaction.user.id);
+    // เดิมลืม await → เงินผู้โอนไม่ถูกหักจริง (ปั๊ม Gold ได้) — แก้แล้ว
+    const fromInv = await getInventory(interaction.user.id);
     if (fromInv.gold < amount) throw new Error(`Gold ไม่พอ (มี ${fromInv.gold.toLocaleString()})`);
-
-    fromInv.gold -= amount;
+    await addItem(interaction.user.id, 'gold', -amount);
     await addItem(target.id, 'gold', amount);
-    const toInv = getInventory(target.id);
+    const fromAfter = await getInventory(interaction.user.id);
+    const toInv     = await getInventory(target.id);
 
     await interaction.reply(
       `💸 **${fromName}** โอน 💰 **${amount.toLocaleString()} Gold** ให้ **${toName}**\n` +
-      `${fromName}: ${fromInv.gold.toLocaleString()} | ${toName}: ${toInv.gold.toLocaleString()}`
+      `${fromName}: ${fromAfter.gold.toLocaleString()} | ${toName}: ${toInv.gold.toLocaleString()}`
     );
   } catch (err) { await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true }); }
 }
