@@ -10,6 +10,8 @@ const { handleRace }    = require('./src/commands/race');
 const { handleTrain }   = require('./src/commands/train');
 const { handleDaily, handleInventory, handleInspect, handleSetRole, handleGive, handleGift, handleTransfer } = require('./src/commands/economy');
 const { restoreSessionsFromDB } = require('./src/race/raceSession');
+const { handleCharacter, handleRelation } = require('./src/commands/character');
+const { RELATION_TYPES } = require('./src/character/relations');
 
 // ============================
 // Global Error Handlers — ป้องกัน process crash จาก unhandled error
@@ -109,14 +111,15 @@ const commands = [
       s.setName('submit').setDescription('ส่งบทฝึก')
         .addStringOption(o => o.setName('type').setDescription('ประเภท').setRequired(true)
           .addChoices(
-            { name: 'ฝึกคนเดียว',              value: 'solo'        },
-            { name: 'คุยกับเทรนเนอร์',          value: 'withTrainer' },
-            { name: 'ฝึกคู่/กลุ่ม',             value: 'group'       },
+            { name: 'ฝึกคนเดียว (Race Safe)',        value: 'solo'        },
+            { name: 'ฝึกกับเทรนเนอร์',               value: 'withTrainer' },
+            { name: 'ฝึกกับสาวม้าคนอื่น',             value: 'group'       },
             { name: 'ล้าง Hill Debuff',          value: 'hillClear'   },
             { name: 'Unlock Zone (G1)',          value: 'zoneUnlock'  },
           ))
         .addStringOption(o => o.setName('link').setDescription('ลิงก์บทโรล').setRequired(true))
-        .addUserOption(o => o.setName('trainer').setDescription('เทรนเนอร์ (ถ้ามี)').setRequired(false))
+        .addUserOption(o => o.setName('trainer').setDescription('เทรนเนอร์ที่ร่วมฝึก (ถ้ามี)').setRequired(false))
+        .addUserOption(o => o.setName('partner').setDescription('สาวม้าคู่ฝึก (จำเป็นสำหรับฝึกกับสาวม้าคนอื่น)').setRequired(false))
         .addUserOption(o => o.setName('uma').setDescription('สาวม้า (ถ้าเทรนเนอร์ submit แทน)').setRequired(false))
         .addStringOption(o => o.setName('location').setDescription('สถานที่ฝึก').setRequired(false))
     )
@@ -132,8 +135,7 @@ const commands = [
     .addSubcommand(s => s.setName('list').setDescription('รายการรอ approve (สตาฟ)')),
 
   new SlashCommandBuilder()
-    .setName('debuff').setDescription('ใช้สกิลแดง บังคับให้คนอื่นทอยใหม่')
-    .addUserOption(o => o.setName('target').setDescription('เป้าหมาย').setRequired(true)),
+    .setName('debuff').setDescription('🔴 สกิลแดง — สุ่มคู่แข่ง 1 คน ทอยใหม่แล้วหัก 20 (1 ครั้งต่อการแข่ง)'),
 
   new SlashCommandBuilder().setName('allout').setDescription('All Out — reroll ใหม่ แต่หักแต้ม -10n'),
 
@@ -166,7 +168,6 @@ const commands = [
     .setName('gift').setDescription('มอบ item แก่ผู้เล่น (สตาฟ)')
     .addStringOption(o => o.setName('type').setDescription('ประเภท item').setRequired(true)
       .addChoices(
-        { name: '🔁 Main Reroll',    value: 'reroll.main'    },
         { name: '⚡ One-use Reroll', value: 'reroll.oneUse'  },
         { name: '🎯 Trainer Reroll', value: 'reroll.trainer' },
         { name: '🛡️ Race Safe',      value: 'raceSafe'       },
@@ -176,6 +177,40 @@ const commands = [
     .addIntegerOption(o => o.setName('amount').setDescription('จำนวน (ไม่ใช้กับ Hill Clear/Zone)').setRequired(false).setMinValue(1))
     .addUserOption(o => o.setName('target').setDescription('ผู้รับ (คน)').setRequired(false))
     .addRoleOption(o => o.setName('role').setDescription('ผู้รับ (role ทั้งหมด)').setRequired(false)),
+
+  new SlashCommandBuilder()
+    .setName('character').setDescription('ข้อมูลตัวละคร / เทรนเนอร์ / ทีม')
+    .addSubcommand(s =>
+      s.setName('set').setDescription('บันทึกตัวละคร (สตาฟ)')
+        .addUserOption(o => o.setName('user').setDescription('ผู้เล่นสาวม้า').setRequired(true))
+        .addStringOption(o => o.setName('name').setDescription('ชื่อตัวละคร').setRequired(true))
+        .addUserOption(o => o.setName('trainer').setDescription('เทรนเนอร์ของตัวละคร').setRequired(false))
+    )
+    .addSubcommand(s =>
+      s.setName('info').setDescription('ดูข้อมูลตัวละคร ความสัมพันธ์ และทีม')
+        .addUserOption(o => o.setName('user').setDescription('ผู้เล่น (ว่าง = ตัวเอง)').setRequired(false))
+    )
+    .addSubcommand(s =>
+      s.setName('remove').setDescription('ลบข้อมูลตัวละคร (สตาฟ)')
+        .addUserOption(o => o.setName('user').setDescription('ผู้เล่น').setRequired(true))
+    ),
+
+  new SlashCommandBuilder()
+    .setName('relation').setDescription('ความสัมพันธ์ตามลอร์ (สตาฟ)')
+    .addSubcommand(s =>
+      s.setName('add').setDescription('เพิ่มความสัมพันธ์')
+        .addUserOption(o => o.setName('user1').setDescription('ตัวละคร 1').setRequired(true))
+        .addUserOption(o => o.setName('user2').setDescription('ตัวละคร 2').setRequired(true))
+        .addStringOption(o => o.setName('type').setDescription('ประเภท').setRequired(true)
+          .addChoices(...Object.entries(RELATION_TYPES).map(([value, name]) => ({ name, value }))))
+    )
+    .addSubcommand(s =>
+      s.setName('remove').setDescription('ลบความสัมพันธ์')
+        .addUserOption(o => o.setName('user1').setDescription('ตัวละคร 1').setRequired(true))
+        .addUserOption(o => o.setName('user2').setDescription('ตัวละคร 2').setRequired(true))
+        .addStringOption(o => o.setName('type').setDescription('ประเภท').setRequired(true)
+          .addChoices(...Object.entries(RELATION_TYPES).map(([value, name]) => ({ name, value }))))
+    ),
 
   new SlashCommandBuilder()
     .setName('transfer').setDescription('โอน Gold ให้ผู้เล่นอื่น')
@@ -215,7 +250,7 @@ client.on('interactionCreate', async interaction => {
     // Commands ที่ทุกคนใช้ได้ (ไม่ต้องมี Staff/Assistant role)
     const publicCmds = [
       'roll', 'daily', 'inventory', 'inspect', 'allout',
-      'race', 'train', 'transfer', 'debuff', 'setrole', 'trainer',
+      'race', 'train', 'transfer', 'debuff', 'setrole', 'trainer', 'character',
     ];
 
     if (interaction.isChatInputCommand()) {
@@ -256,6 +291,8 @@ client.on('interactionCreate', async interaction => {
     if (commandName === 'give')      await handleGive(interaction);
     if (commandName === 'gift')      await handleGift(interaction);
     if (commandName === 'transfer')  await handleTransfer(interaction);
+    if (commandName === 'character') await handleCharacter(interaction);
+    if (commandName === 'relation')  await handleRelation(interaction);
 
   } catch (err) {
     // Router-level catch — กัน crash กรณี handler โยน error ออกมา

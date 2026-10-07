@@ -133,7 +133,11 @@ function registerPlayer(channelId, userId, displayName, position, options = {}) 
   session.players.set(userId, {
     userId, displayName, position,
     score: 0,
-    reroll: { main: 1, oneUse: 0 },
+    // Main / G1 Reroll นับใน session เท่านั้น — ไม่แตะ DB ระหว่างแข่ง
+    // Main = 1 ทุกคนทุกการแข่ง, G1 = จำนวนครั้งที่ชนะ G1 (ได้ใหม่ทุกการแข่ง)
+    mainRerollsLeft: 1,
+    g1RerollsLeft:   options.g1Wins || 0,
+    redSkillUsed:    false,
     allOutCount: 0,
     rolled: false,
     hillCleared:   options.hillCleared  || false,
@@ -160,6 +164,75 @@ function adjustScore(channelId, userId, amount) {
 
   persistSession(channelId).catch(err => console.error('[adjustScore] persist failed:', err));
   return player;
+}
+
+/**
+ * ใช้ Reroll ที่นับใน session (Main หรือ G1) — ไม่แตะ DB
+ * kind = 'main' | 'g1'  → คืนจำนวนที่เหลือ
+ */
+const SESSION_REROLL_FIELD = { main: 'mainRerollsLeft', g1: 'g1RerollsLeft' };
+const SESSION_REROLL_NAME  = { main: 'Main Reroll', g1: 'G1 Reroll' };
+
+function getSessionRerolls(channelId, userId, kind) {
+  if (!hasSession(channelId)) return null;
+  const player = getSession(channelId).players.get(userId);
+  if (!player) return null;
+  // session เก่าที่ restore มาจาก DB อาจไม่มี field นี้
+  if (kind === 'main') return player.mainRerollsLeft ?? 1;
+  return player.g1RerollsLeft ?? 0;
+}
+
+function useSessionReroll(channelId, userId, kind) {
+  const session = getSession(channelId);
+  const player  = session.players.get(userId);
+  if (!player) throw new Error('คุณไม่ได้อยู่ใน session นี้');
+  const field = SESSION_REROLL_FIELD[kind];
+  if (!field) throw new Error(`Unknown reroll: ${kind}`);
+  const left = getSessionRerolls(channelId, userId, kind);
+  if (left <= 0) throw new Error(`ไม่มี ${SESSION_REROLL_NAME[kind]} เหลือแล้ว`);
+  player[field] = left - 1;
+  persistSession(channelId).catch(err => console.error('[useSessionReroll] persist failed:', err));
+  return player[field];
+}
+
+/**
+ * 🔴 Red Skill — ใช้ได้ 1 ครั้งต่อการแข่ง
+ * สุ่มเป้าหมายจากคู่แข่งที่ทอยแล้วในเทิร์นนี้ → ยกเลิกแต้มเทิร์นนั้นของเป้าหมาย
+ * → ทอยใหม่ด้วยสูตรเดิมของเป้าหมาย → แต้มเทิร์น = max(ผลใหม่ - 20, 0)
+ */
+const RED_SKILL_BASE = 20;
+
+function useRedSkill(channelId, userId, rollFn, randomFn = Math.random) {
+  const session = getSession(channelId);
+  if (session.status !== 'racing') throw new Error('การแข่งยังไม่เริ่ม');
+  const user = session.players.get(userId);
+  if (!user) throw new Error('คุณยังไม่ได้ลงทะเบียนแข่ง');
+  if (user.redSkillUsed) throw new Error('ใช้สกิลแดงไปแล้วในการแข่งนี้ (Skill Already Used)');
+
+  // เป้าหมายที่เป็นไปได้: คู่แข่งที่ทอยแล้วเทิร์นนี้ มีผลทอยล่าสุด และไม่ได้ใช้ Zone เทิร์นนี้
+  const targets = [...session.players.values()].filter(p =>
+    p.userId !== userId &&
+    p.rolled &&
+    getLastRoll(channelId, p.userId) &&
+    p.zoneUsedTurn !== session.totalTurn
+  );
+  if (targets.length === 0) throw new Error('ยังไม่มีคู่แข่งที่ทอยในเทิร์นนี้ให้เป็นเป้าหมาย (No Valid Target)');
+
+  const target   = targets[Math.floor(randomFn() * targets.length)];
+  const last     = getLastRoll(channelId, target.userId);
+  const newRoll  = rollFn(last.notation);
+  const turnScore = Math.max(newRoll.total - RED_SKILL_BASE, 0);
+  const base     = session.turnSnapshot.get(target.userId) ?? 0;
+
+  target.score    = base + turnScore;
+  target.debuffed = true;
+  user.redSkillUsed = true;
+  lastRolls.set(`${channelId}:${target.userId}`, {
+    ...newRoll, total: turnScore, display: `${newRoll.display} − ${RED_SKILL_BASE}`, redSkilled: true,
+  });
+
+  persistSession(channelId).catch(err => console.error('[useRedSkill] persist failed:', err));
+  return { target, oldRoll: last, newRoll, turnScore, base: RED_SKILL_BASE };
 }
 
 /**
@@ -300,6 +373,8 @@ module.exports = {
   setLastRoll,
   openSession, registerPlayer,
   adjustScore,
+  getSessionRerolls, useSessionReroll,
+  useRedSkill, RED_SKILL_BASE,
   submitScore,
   getLastRoll, trainerReroll,
   getTurnSnapshot,
