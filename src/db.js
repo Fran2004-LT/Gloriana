@@ -16,7 +16,7 @@ const pool = new Pool({
 pool.on('error', err => console.error('⚠️ [pg pool] idle client error:', err.message));
 
 // error ที่เกิดจากการเชื่อมต่อหลุดชั่วคราว — ลองใหม่ได้อย่างปลอดภัย
-const TRANSIENT = /ECONNRESET|ETIMEDOUT|EPIPE|Connection terminated|terminating connection/i;
+const TRANSIENT = /ECONNRESET|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|Connection terminated|terminating connection|starting up/i;
 
 // แทน pool.query เดิม: ถ้าการเชื่อมต่อหลุด ลองใหม่อีกสูงสุด 2 ครั้งด้วยการเชื่อมต่อใหม่
 const rawQuery = pool.query.bind(pool);
@@ -34,8 +34,23 @@ pool.query = async (...args) => {
 
 /**
  * สร้าง tables ถ้ายังไม่มี
+ * ตอนบอทเพิ่งเปิด เครือข่ายภายในของ Railway / Postgres อาจยังไม่พร้อม
+ * → รอแล้วลองใหม่ได้นานสุดราว 2 นาที แทนการยอมแพ้ตั้งแต่ครั้งแรก
  */
 async function initDB() {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await createTables();
+    } catch (err) {
+      const msg = `${err.code || ''} ${err.message}`;
+      if (attempt >= 24 || !TRANSIENT.test(msg)) throw err;
+      console.warn(`⏳ [db] ยังต่อ database ไม่ได้ (${err.code || err.message}) — ลองใหม่ใน 5 วินาที (${attempt}/24)`);
+      await new Promise(r => setTimeout(r, 5000));
+    }
+  }
+}
+
+async function createTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS inventory (
       user_id       TEXT PRIMARY KEY,
