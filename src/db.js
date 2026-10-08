@@ -5,7 +5,32 @@ const { Pool } = require('pg');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  // ส่ง keep-alive กันการเชื่อมต่อที่เปิดค้างถูก proxy ตัดเงียบๆ
+  keepAlive: true,
+  // ปิดการเชื่อมต่อที่ว่างเกิน 30 วิ ก่อนที่ปลายทางจะตัดเอง
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 10_000,
 });
+
+// การเชื่อมต่อที่ว่างอยู่แล้วถูกตัด → แค่ log ไว้ (pool จะทิ้งตัวนั้นแล้วเปิดใหม่ให้เอง)
+pool.on('error', err => console.error('⚠️ [pg pool] idle client error:', err.message));
+
+// error ที่เกิดจากการเชื่อมต่อหลุดชั่วคราว — ลองใหม่ได้อย่างปลอดภัย
+const TRANSIENT = /ECONNRESET|ETIMEDOUT|EPIPE|Connection terminated|terminating connection/i;
+
+// แทน pool.query เดิม: ถ้าการเชื่อมต่อหลุด ลองใหม่อีกสูงสุด 2 ครั้งด้วยการเชื่อมต่อใหม่
+const rawQuery = pool.query.bind(pool);
+pool.query = async (...args) => {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await rawQuery(...args);
+    } catch (err) {
+      if (attempt >= 3 || !TRANSIENT.test(`${err.code} ${err.message}`)) throw err;
+      console.warn(`⚠️ [pg] ${err.code || err.message} — retry ${attempt}/2`);
+      await new Promise(r => setTimeout(r, 200 * attempt));
+    }
+  }
+};
 
 /**
  * สร้าง tables ถ้ายังไม่มี
