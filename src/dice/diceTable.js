@@ -109,8 +109,22 @@ function getHillDebuff(position, phase, track) {
   return HILL_DEBUFF[position] || 0;
 }
 
+/**
+ * อธิบายว่าทำไมได้ Gold/White — ใช้แสดงให้ผู้เล่นเห็นตัวเลขที่บอทใช้คำนวณ
+ * @returns {string} เช่น "ม้าหน้า 112 (ห่าง 12) · ม้าหลัง 95 (ห่าง 5)"
+ */
+function describeZone(myScore, allScores) {
+  const sorted = [...allScores].sort((a, b) => b - a);
+  const idx    = sorted.indexOf(myScore);
+  const parts  = [];
+  if (idx > 0)                 parts.push(`ม้าหน้า ${sorted[idx - 1]} (ห่าง ${sorted[idx - 1] - myScore})`);
+  if (idx < sorted.length - 1) parts.push(`ม้าหลัง ${sorted[idx + 1]} (ห่าง ${myScore - sorted[idx + 1]})`);
+  return `คะแนนต้นเทิร์นของคุณ ${myScore}` + (parts.length ? ` · ${parts.join(' · ')}` : '') +
+         ` — Gold เมื่อห่าง ≤ ${GOLD_THRESHOLD}`;
+}
+
 module.exports = {
-  GOLD_THRESHOLD,
+  GOLD_THRESHOLD, describeZone,
   WHITE, GOLD,
   getNotation,
   isInGoldZone,
