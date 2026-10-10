@@ -92,4 +92,21 @@ function parseNotation(notation) {
   return { count, sides, keep, reroll, minPerDie, maxPerDie, modifier, raw };
 }
 
-module.exports = { parseNotation };
+/**
+ * รูปแบบมาตรฐานของ notation — ใช้เทียบว่าเป็น "เต๋าเดียวกัน" ไหม
+ * "3D30" / "03d30" → "3d30", "1d30" → "1d30" (เทียบกับ "d30" ได้เท่ากัน), " 3d30KH2 " → "3d30kh2"
+ * คืน null ถ้า notation ไม่ถูกต้อง
+ */
+function canonicalNotation(notation) {
+  try {
+    const p = parseNotation(notation);
+    return `${p.count}d${p.sides}` +
+      (p.keep      ? `k${p.keep.type}${p.keep.count}`        : '') +
+      (p.reroll    ? `r${p.reroll.type}${p.reroll.threshold}` : '') +
+      (p.minPerDie !== null ? `mi${p.minPerDie}` : '') +
+      (p.maxPerDie !== null ? `ma${p.maxPerDie}` : '') +
+      (p.modifier  ? (p.modifier > 0 ? `+${p.modifier}` : `${p.modifier}`) : '');
+  } catch { return null; }
+}
+
+module.exports = { parseNotation, canonicalNotation };

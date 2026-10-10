@@ -129,6 +129,10 @@ function registerPlayer(channelId, userId, displayName, position, options = {}) 
     return existing;
   }
 
+  // ลงทะเบียนใหม่ได้เฉพาะเทิร์นแรก — คนที่เข้ากลางทางเริ่มที่ 0 แต้ม
+  // จะไปทำให้ม้าท้ายสนามได้ Gold zone โดยไม่ควรได้
+  if (session.totalTurn > 1) throw new Error('เริ่มแข่งไปแล้ว ลงทะเบียนเพิ่มไม่ได้ (ลงได้เฉพาะเทิร์นแรก)');
+
   const isDebut = session.grade === 'Debut';
   session.players.set(userId, {
     userId, displayName, position,

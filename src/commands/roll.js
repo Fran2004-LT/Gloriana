@@ -3,6 +3,7 @@
 const { ButtonBuilder, ButtonStyle, ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder } = require('discord.js');
 const { roll }              = require('../dice/diceRoller');
 const { getPlayerNotation, getNotation, describeZone } = require('../dice/diceTable');
+const { canonicalNotation } = require('../dice/diceParser');
 const { getHillDebuff }     = require('../config/tracks');
 const { getInventory, useItem } = require('../inventory/inventoryStore');
 const {
@@ -119,7 +120,9 @@ function checkNotation(channelId, userId, notation) {
       { hillDebuff: hill, forceWhite, zoneEnabled: false }
     );
     const why = forceWhite ? 'เทิร์นแรกทอย White เสมอ' : describeZone(mySnapshot.score, allScores);
-    return { correct: notation === expected, expected, isGold, why };
+    // เทียบแบบ "เต๋าเดียวกัน" ไม่ใช่ตัวอักษรตรงตัว (3D30 = 3d30, 1d30 = d30)
+    const correct = canonicalNotation(notation) !== null && canonicalNotation(notation) === canonicalNotation(expected);
+    return { correct, expected, isGold, why };
   } catch { return null; }
 }
 
