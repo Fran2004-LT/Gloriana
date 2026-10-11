@@ -129,6 +129,10 @@ function registerPlayer(channelId, userId, displayName, position, options = {}) 
     return existing;
   }
 
+  // ลงทะเบียนใหม่ได้เฉพาะเทิร์นแรก — คนที่เข้ากลางทางเริ่มที่ 0 แต้ม
+  // จะไปทำให้ม้าท้ายสนามได้ Gold zone โดยไม่ควรได้
+  if (session.totalTurn > 1) throw new Error('เริ่มแข่งไปแล้ว ลงทะเบียนเพิ่มไม่ได้ (ลงได้เฉพาะเทิร์นแรก)');
+
   const isDebut = session.grade === 'Debut';
   session.players.set(userId, {
     userId, displayName, position,
@@ -158,9 +162,13 @@ function adjustScore(channelId, userId, amount) {
   const player = session.players.get(userId);
   if (!player) throw new Error('คุณไม่ได้อยู่ใน session นี้');
   if (amount < 1 || amount > 10) throw new Error('ลดได้ไม่เกิน 10 แต้มต่อครั้ง');
-  if (player.score - amount < 0) throw new Error('คะแนนจะติดลบ ลดไม่ได้');
+  const base = session.turnSnapshot.get(userId) ?? player.score;
+  if (player.score - amount < 0 || base - amount < 0) throw new Error('คะแนนจะติดลบ ลดไม่ได้');
   player.score -= amount;
-  session.turnSnapshot.set(userId, player.score);
+  // ลดทั้งคะแนนจริงและคะแนนต้นเทิร์นเท่ากัน
+  // (เดิมตั้ง snapshot = score ทำให้แต้มที่ทอยไปแล้วในเทิร์นนี้ปนเข้า "คะแนนต้นเทิร์น"
+  //  → โซนของม้าคนอื่นคำนวณผิด และ reroll หลัง slowdown ได้แต้มเกินจริง)
+  session.turnSnapshot.set(userId, base - amount);
 
   persistSession(channelId).catch(err => console.error('[adjustScore] persist failed:', err));
   return player;

@@ -2,7 +2,8 @@
 
 const { ButtonBuilder, ButtonStyle, ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder } = require('discord.js');
 const { roll }              = require('../dice/diceRoller');
-const { getPlayerNotation, getNotation } = require('../dice/diceTable');
+const { getPlayerNotation, getNotation, describeZone } = require('../dice/diceTable');
+const { canonicalNotation } = require('../dice/diceParser');
 const { getHillDebuff }     = require('../config/tracks');
 const { getInventory, useItem } = require('../inventory/inventoryStore');
 const {
@@ -118,7 +119,10 @@ function checkNotation(channelId, userId, notation) {
       mySnapshot, session.phase, allScores,
       { hillDebuff: hill, forceWhite, zoneEnabled: false }
     );
-    return { correct: notation === expected, expected, isGold };
+    const why = forceWhite ? 'เทิร์นแรกทอย White เสมอ' : describeZone(mySnapshot.score, allScores);
+    // เทียบแบบ "เต๋าเดียวกัน" ไม่ใช่ตัวอักษรตรงตัว (3D30 = 3d30, 1d30 = d30)
+    const correct = canonicalNotation(notation) !== null && canonicalNotation(notation) === canonicalNotation(expected);
+    return { correct, expected, isGold, why };
   } catch { return null; }
 }
 
@@ -143,7 +147,7 @@ async function doRoll(userId, displayName, channelId, notation, label) {
   if (channelId && hasSession(channelId)) {
     const check = checkNotation(channelId, userId, notation);
     if (check && !check.correct) {
-      return { error: `⚠️ ควรทอย \`${check.expected}\` (${check.isGold ? '🟡 Gold' : '⚪ White'})\nคุณทอย \`${notation}\` — ผลจะไม่ถูกบันทึก` };
+      return { error: `⚠️ ควรทอย \`${check.expected}\` (${check.isGold ? '🟡 Gold' : '⚪ White'})\nคุณทอย \`${notation}\` — ผลจะไม่ถูกบันทึก\n📏 ${check.why}` };
     }
     try {
       const session2 = getSession(channelId);

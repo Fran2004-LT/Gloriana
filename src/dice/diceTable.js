@@ -2,26 +2,27 @@
 
 /**
  * diceTable.js
- * Dice table v3.3 + White/Gold logic
+ * Dice table v3.4 + White/Gold logic
  * Gold zone threshold: ≤9 แต้ม
  */
 
 const GOLD_THRESHOLD = 9;
 
-// White dice table v3.3 [position][phase 1-4]
+// White dice table v3.4 [position][phase 1-4]
+// v3.4: ปรับสมดุลจากการจำลอง (Front อ่อนเกิน, Pace ครองสนามใหญ่, End พึ่งเฟส 3 จุดเดียว)
 const WHITE = {
-  Front: ['d30', '2d30', '3d30', '2d30'],
-  Pace:  ['d30', '2d30', '2d30', '3d30'],
-  Late:  ['d30', '2d30', '3d30', '2d30'],
-  End:   ['d30', '2d30', '6d30', 'd30' ],
+  Front: ['2d30', '2d30', '3d30', '3d30'],   // v3.3: d30, 2d30, 3d30, 2d30
+  Pace:  ['d30',  '2d30', '2d30', '3d30'],
+  Late:  ['d30',  '2d30', '3d30', '2d30'],
+  End:   ['d30',  '2d30', '5d30', 'd30' ],   // v3.3: เฟส 3 = 6d30
 };
 
-// Gold dice table v3.3 [position][phase 1-4]
+// Gold dice table v3.4 [position][phase 1-4]
 const GOLD = {
-  Front: ['3d30',     '3d30',     '3d30',     'd30'     ],
-  Pace:  ['3d30kh2',  '6d30kh2',  '6d30kh2',  '6d30kh3' ],
-  Late:  ['d30',      '6d30kh2',  '8d30kh3',  '3d30'    ],
-  End:   ['d30',      'd30',      '6d30',     '3d30'    ],
+  Front: ['3d30',  '5d30kh3', '5d30kh3', 'd30'     ],   // v3.3: 3d30, 3d30, 3d30, d30
+  Pace:  ['3d30',  '6d30kh2', '6d30kh2', '6d30kh3' ],   // v3.3: เฟส 1 = 3d30kh2
+  Late:  ['d30',   '4d30',    '8d30kh3', '3d30'    ],   // v3.3: เฟส 2 = 6d30kh2
+  End:   ['2d30',  '2d30',    '6d30',    '3d30'    ],   // v3.3: d30, d30, 6d30, 3d30
 };
 
 /**
@@ -109,8 +110,22 @@ function getHillDebuff(position, phase, track) {
   return HILL_DEBUFF[position] || 0;
 }
 
+/**
+ * อธิบายว่าทำไมได้ Gold/White — ใช้แสดงให้ผู้เล่นเห็นตัวเลขที่บอทใช้คำนวณ
+ * @returns {string} เช่น "ม้าหน้า 112 (ห่าง 12) · ม้าหลัง 95 (ห่าง 5)"
+ */
+function describeZone(myScore, allScores) {
+  const sorted = [...allScores].sort((a, b) => b - a);
+  const idx    = sorted.indexOf(myScore);
+  const parts  = [];
+  if (idx > 0)                 parts.push(`ม้าหน้า ${sorted[idx - 1]} (ห่าง ${sorted[idx - 1] - myScore})`);
+  if (idx < sorted.length - 1) parts.push(`ม้าหลัง ${sorted[idx + 1]} (ห่าง ${myScore - sorted[idx + 1]})`);
+  return `คะแนนต้นเทิร์นของคุณ ${myScore}` + (parts.length ? ` · ${parts.join(' · ')}` : '') +
+         ` — Gold เมื่อห่าง ≤ ${GOLD_THRESHOLD}`;
+}
+
 module.exports = {
-  GOLD_THRESHOLD,
+  GOLD_THRESHOLD, describeZone,
   WHITE, GOLD,
   getNotation,
   isInGoldZone,

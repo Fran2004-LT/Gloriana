@@ -2,7 +2,7 @@
 
 const { EmbedBuilder } = require('discord.js');
 const { getInventory, addItem, recordWin, resetTrainingItems } = require('../inventory/inventoryStore');
-const { getPlayerNotation }  = require('../dice/diceTable');
+const { getPlayerNotation, describeZone } = require('../dice/diceTable');
 const { getHillDebuff }      = require('../config/tracks');
 const { roll }               = require('../dice/diceRoller');
 const { handleProxy, handleUnproxy, handleRedo } = require('./roll');
@@ -224,11 +224,14 @@ async function handleRace(interaction) {
       const myScore    = session.turnSnapshot.get(interaction.user.id) ?? updated.score;
       const mySnapshot = { ...updated, score: myScore };
       const hill       = updated.hillCleared ? 0 : getHillDebuff(session.track, updated.position, session.phase);
-      const { isGold } = getPlayerNotation(mySnapshot, session.phase, allScores, { hillDebuff: hill });
+      const forceWhite = session.isFirstTurn === true;
+      const { notation, isGold } = getPlayerNotation(mySnapshot, session.phase, allScores, { hillDebuff: hill, forceWhite });
 
       await interaction.reply(
         `🐢 **${interaction.member?.displayName || interaction.user.username}** ลดแต้ม -${amount}\n` +
-        `📊 **${updated.score}** | ${isGold ? '🟡 Gold zone' : '⚪ White zone'}`
+        `📊 **${updated.score}** | ${isGold ? '🟡 Gold zone' : '⚪ White zone'}` +
+        (player.rolled ? '' : ` → ทอย \`${notation}\``) + `\n` +
+        `📏 ${forceWhite ? 'เทิร์นแรกทอย White เสมอ' : describeZone(myScore, allScores)}`
       );
     }
 
