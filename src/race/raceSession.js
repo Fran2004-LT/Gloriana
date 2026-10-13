@@ -87,6 +87,10 @@ async function restoreSessionsFromDB() {
     for (const [channelId, session] of Object.entries(all)) {
       sessions.set(channelId, session);
       count++;
+      // บอกว่าสนามค้างอยู่ช่องไหน — ใช้ตามหาสนามผีแล้ว /race close ช่องนั้น
+      console.log(`   ↳ ช่อง ${channelId} (<#${channelId}>) · ${session.track} ${session.grade} · ` +
+        `เทิร์น ${session.totalTurn}/${session.distance} · ${session.players?.size ?? 0} คน · ${session.status}` +
+        (session.skillsEnabled ? ' · skills' : ''));
     }
     if (count > 0) console.log(`✅ [raceSession] Restored ${count} active session(s) from DB`);
   } catch (err) {
