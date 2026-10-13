@@ -11,7 +11,20 @@ const {
   trainerReroll, getLastRoll, setLastRoll,
   setProxy, clearProxyByOwner, getProxyOwner,
   getSessionRerolls, useSessionReroll, useRedSkill, RED_SKILL_BASE,
+  getTurnPlan, resolveTurn,
 } = require('../race/raceSession');
+
+/**
+ * ทอยของเทิร์นนี้ — ถ้าการแข่งเปิดระบบสกิล บอทคิดสูตร/โบนัสตามสกิลให้ทั้งหมด
+ * (ใช้กับ Reroll / Safe / All Out เพื่อให้ "ทอยใหม่ด้วยเงื่อนไขเดิม" เหมือนกันทุกทาง)
+ */
+function rollForTurn(channelId, userId, notation) {
+  if (channelId && hasSession(channelId)) {
+    const s = getSession(channelId);
+    if (s.skillsEnabled && s.players.has(userId)) return resolveTurn(channelId, userId, roll);
+  }
+  return roll(notation);
+}
 
 // Staff/Assistant role IDs
 const ALLOWED_ROLES = ['1441679665893740614', '1506298098224332850'];
@@ -52,6 +65,10 @@ function buildResultEmbed(emoji, label, result, scoreInfo = null) {
 
   if (result.modifier && result.modifier !== 0) {
     embed.addFields({ name: 'Modifier', value: `\`${result.modifier > 0 ? '+' : ''}${result.modifier}\``, inline: true });
+  }
+
+  if (Array.isArray(result.skillLines) && result.skillLines.length) {
+    embed.addFields({ name: '✨ สกิล', value: result.skillLines.join('\n').slice(0, 1024), inline: false });
   }
 
   embed.addFields({ name: 'Total', value: `**${result.total}**`, inline: true });
@@ -113,8 +130,16 @@ function checkNotation(channelId, userId, notation) {
     const snapshot   = getTurnSnapshot(channelId);
     const allScores  = snapshot.map(([, s]) => s);
     const mySnapshot = { ...player, score: session.turnSnapshot.get(userId) ?? player.score };
-    const hill       = player.hillCleared ? 0 : getHillDebuff(session.track, player.position, session.phase);
     const forceWhite = session.isFirstTurn === true;
+    const why0       = forceWhite ? 'เทิร์นแรกทอย White เสมอ' : describeZone(mySnapshot.score, allScores);
+    // ระบบสกิล: สูตรที่ถูกต้องมาจากแผนของเทิร์น (รวม passive / ไพ่ตาย แล้ว)
+    const plan = getTurnPlan(channelId, userId);
+    if (plan) {
+      const correct = canonicalNotation(notation) !== null && canonicalNotation(notation) === canonicalNotation(plan.notation);
+      const extra = plan.lines.length ? `\n✨ ${plan.lines.join('\n✨ ')}` : '';
+      return { correct, expected: plan.notation, isGold: plan.zone === 'gold', why: why0 + extra };
+    }
+    const hill       = player.hillCleared ? 0 : getHillDebuff(session.track, player.position, session.phase);
     const { notation: expected, isGold } = getPlayerNotation(
       mySnapshot, session.phase, allScores,
       { hillDebuff: hill, forceWhite, zoneEnabled: false }
@@ -139,7 +164,7 @@ async function doRoll(userId, displayName, channelId, notation, label) {
     }
   }
   userId = effectiveUserId;
-  const result = roll(notation);
+  let result = roll(notation);
   let scoreMsg = '';
   let canSafe  = false;
   let grade    = null;
@@ -150,6 +175,12 @@ async function doRoll(userId, displayName, channelId, notation, label) {
       return { error: `⚠️ ควรทอย \`${check.expected}\` (${check.isGold ? '🟡 Gold' : '⚪ White'})\nคุณทอย \`${notation}\` — ผลจะไม่ถูกบันทึก\n📏 ${check.why}` };
     }
     try {
+      // ระบบสกิล: บอทคิดแต้มทั้งเทิร์น (ชุดที่ลอก, โบนัส passive ฯลฯ)
+      const sNow = getSession(channelId);
+      if (sNow.skillsEnabled && sNow.players.has(userId)) {
+        if (sNow.players.get(userId).rolled) throw new Error('คุณทอยไปแล้วในเทิร์นนี้');
+        result = resolveTurn(channelId, userId, roll);
+      }
       const session2 = getSession(channelId);
       grade = session2.grade;
       const { player, canSafe: cs } = submitScore(channelId, userId, result, false, false);
@@ -269,7 +300,7 @@ async function handleDoReroll(interaction) {
       await useItem(interaction.user.id, itemMap[type]);
     }
 
-    const result = roll(notation);
+    const result = rollForTurn(channelId, interaction.user.id, notation);
     let scoreMsg = '';
     let canSafe  = false;
     let grade    = null;
@@ -335,7 +366,7 @@ async function handleSafe(interaction) {
       await useItem(interaction.user.id, 'raceSafe');
     }
 
-    const result = roll(notation);
+    const result = rollForTurn(channelId, interaction.user.id, notation);
     let scoreMsg = '';
     let canSafe  = false;
     let safeCount;
@@ -372,16 +403,30 @@ async function handleDebuff(interaction) {
 
   try {
     if (!hasSession(channelId)) throw new Error('ไม่มี session การแข่งอยู่');
-    const { target, oldRoll, newRoll, turnScore, base } = useRedSkill(channelId, interaction.user.id, roll);
+    const red = useRedSkill(channelId, interaction.user.id, roll);
+    const { target, oldRoll, newRoll, turnScore, base } = red;
 
+    if (red.blocked) {
+      const haloEmbed = new EmbedBuilder()
+        .setColor(0xF5C518)
+        .setTitle('🛡️ Iron Halo!')
+        .setDescription(`สกิลแดงของ **${userName}** สุ่มโดน **${target.displayName}** แต่ถูกสนามพลังสกัดไว้\nแต้มของ ${target.displayName} ไม่เปลี่ยน — Iron Halo หมดแล้ว`)
+        .setFooter({ text: `สกิลแดงของ ${userName} ถูกใช้แล้วในการแข่งนี้` });
+      await interaction.reply({ embeds: [haloEmbed] });
+      return;
+    }
+
+    const minusLine = newRoll.skillLines
+      ? `${newRoll.skillLines.join('\n')}\n= **${turnScore}**`
+      : `${newRoll.total} − ${base} = **${turnScore}**`;
     const redEmbed = new EmbedBuilder()
       .setColor(0xED4245)
       .setTitle(`🔴 ${userName} ใช้สกิลแดง!`)
       .setDescription(`🎯 ระบบสุ่มเป้าหมาย → **${target.displayName}**`)
       .addFields(
         { name: '❌ ผลเดิม (ยกเลิก)', value: `~~${oldRoll.display} → ${oldRoll.total}~~`, inline: true },
-        { name: '🎲 ทอยใหม่', value: `\`${newRoll.notation}\`: ${newRoll.display} → ${newRoll.total}`, inline: true },
-        { name: '🔻 หัก Base Score', value: `${newRoll.total} − ${base} = **${turnScore}**`, inline: false },
+        { name: '🎲 ทอยใหม่', value: `\`${newRoll.notation}\`: ${newRoll.display} → ${newRoll.diceTotal ?? newRoll.total}`, inline: true },
+        { name: '🔻 หัก Base Score', value: minusLine.slice(0, 1024), inline: false },
         { name: '📊 คะแนนสะสมของเป้าหมาย', value: `**${target.score}**`, inline: false }
       )
       .setFooter({ text: `สกิลแดงของ ${userName} ถูกใช้แล้วในการแข่งนี้` });
@@ -413,7 +458,8 @@ async function handleAllOut(interaction) {
 
     // หัก penalty จากคะแนนสะสมก่อน แล้วบวกผลทอยใหม่เข้า
     const snapshot  = session.turnSnapshot.get(userId) ?? 0;
-    const newResult = roll(last.notation);
+    const newResult = rollForTurn(channelId, userId, last.notation);
+    player.allOutTurn = session.totalTurn;
     const scoreBeforeThisTurn = snapshot; // คะแนนก่อนเทิร์นนี้
     player.score = Math.max(0, scoreBeforeThisTurn - penalty) + newResult.total;
     const newTotal = player.score - scoreBeforeThisTurn;

@@ -12,6 +12,7 @@ const { handleDaily, handleInventory, handleInspect, handleSetRole, handleGive, 
 const { restoreSessionsFromDB } = require('./src/race/raceSession');
 const { handleCharacter, handleRelation } = require('./src/commands/character');
 const { RELATION_TYPES } = require('./src/character/relations');
+const { handleSkill, PASSIVE_CHOICES, ACTIVE_CHOICES } = require('./src/commands/skill');
 
 // ============================
 // Global Error Handlers — ป้องกัน process crash จาก unhandled error
@@ -60,6 +61,7 @@ const commands = [
             { name: 'Mile/Medium (12 เทิร์น)', value: 12 },
             { name: 'Long (14 เทิร์น)',         value: 14 },
           ))
+        .addBooleanOption(o => o.setName('skills').setDescription('เปิดระบบสกิล (passive + ไพ่ตาย) — ไม่ใส่ = ปิด').setRequired(false))
     )
     .addSubcommand(s =>
       s.setName('register').setDescription('ลงทะเบียน')
@@ -97,6 +99,21 @@ const commands = [
       s.setName('redo').setDescription('เรียกผลทอยล่าสุดมา reroll/safe โดยไม่ต้องเลื่อนหา')
     ),
 
+
+  new SlashCommandBuilder()
+    .setName('skill').setDescription('ระบบสกิล — passive + ไพ่ตาย')
+    .addSubcommand(s =>
+      s.setName('pick').setDescription('เลือกสกิล (เห็นคนเดียว) — เปลี่ยนได้จนกว่าจะทอยครั้งแรก')
+        .addStringOption(o => o.setName('passive').setDescription('passive ของคลาสคุณ').setRequired(false).addChoices(...PASSIVE_CHOICES))
+        .addStringOption(o => o.setName('active').setDescription('ไพ่ตาย (ใช้ได้ครั้งเดียว)').setRequired(false).addChoices(...ACTIVE_CHOICES))
+    )
+    .addSubcommand(s =>
+      s.setName('use').setDescription('ใช้ไพ่ตาย')
+        .addUserOption(o => o.setName('target').setDescription('เป้าหมาย (Pocket Sand / Doppelgänger)').setRequired(false))
+        .addStringOption(o => o.setName('zone').setDescription('Ghost Protocol: เลือกสูตร').setRequired(false)
+          .addChoices({ name: '⚪ White', value: 'white' }, { name: '🟡 Gold', value: 'gold' }))
+    )
+    .addSubcommand(s => s.setName('info').setDescription('ดูสกิลของคุณ + สูตรที่ต้องทอยเทิร์นนี้ (เห็นคนเดียว)')),
 
   new SlashCommandBuilder()
     .setName('trainer').setDescription('คำสั่งเทรนเนอร์')
@@ -250,7 +267,7 @@ client.on('interactionCreate', async interaction => {
     // Commands ที่ทุกคนใช้ได้ (ไม่ต้องมี Staff/Assistant role)
     const publicCmds = [
       'roll', 'daily', 'inventory', 'inspect', 'allout',
-      'race', 'train', 'transfer', 'debuff', 'setrole', 'trainer', 'character',
+      'race', 'train', 'transfer', 'debuff', 'setrole', 'trainer', 'character', 'skill',
     ];
 
     if (interaction.isChatInputCommand()) {
@@ -280,6 +297,7 @@ client.on('interactionCreate', async interaction => {
     const { commandName } = interaction;
     if (commandName === 'roll')      await handleRoll(interaction);
     if (commandName === 'race')      await handleRace(interaction);
+    if (commandName === 'skill')     await handleSkill(interaction);
     if (commandName === 'trainer')   await handleTrainerReroll(interaction);
     if (commandName === 'debuff')    await handleDebuff(interaction);
     if (commandName === 'allout')    await handleAllOut(interaction);
