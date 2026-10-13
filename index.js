@@ -25,6 +25,9 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('💥 [unhandledRejection]', reason, 'at:', promise);
 });
 
+// สวิตช์ระบบสกิล: ปิดไว้ (ไม่มี /skill และไม่มีตัวเลือก skills ใน /race start)
+const SKILLS_FEATURE = process.env.SKILLS_FEATURE === 'on';
+
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers],
 });
@@ -234,7 +237,17 @@ const commands = [
     .addUserOption(o => o.setName('target').setDescription('ผู้รับ').setRequired(true))
     .addIntegerOption(o => o.setName('amount').setDescription('จำนวน Gold').setRequired(true).setMinValue(1)),
 
-].map(cmd => cmd.toJSON());
+].map(cmd => cmd.toJSON())
+  // ซ่อนระบบสกิลจาก Discord (โค้ดยังอยู่ครบ) — เปิดกลับ: ตั้ง Railway variable SKILLS_FEATURE=on
+  .filter(c => SKILLS_FEATURE || c.name !== 'skill')
+  .map(c => {
+    if (!SKILLS_FEATURE && c.name === 'race') {
+      for (const sub of c.options || []) {
+        if (sub.name === 'start') sub.options = (sub.options || []).filter(o => o.name !== 'skills');
+      }
+    }
+    return c;
+  });
 
 // ============================
 // Ready
