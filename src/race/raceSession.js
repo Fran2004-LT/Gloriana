@@ -1,6 +1,9 @@
 'use strict';
 
 const { saveSessionDB, loadAllSessionsDB, deleteSessionDB } = require('../db');
+const { SKILLS_VERSION } = require('../skills/skillData');
+const skillEngine = require('../skills/skillEngine');
+const skillSystem = require('../skills/skillSystem');
 
 /**
  * Phase structure ตามระยะสนาม
@@ -93,7 +96,7 @@ async function restoreSessionsFromDB() {
 
 // =================== Session operations ===================
 
-async function openSession(channelId, track = 'ไม่ระบุ', grade = 'G3', distance = 12) {
+async function openSession(channelId, track = 'ไม่ระบุ', grade = 'G3', distance = 12, options = {}) {
   if (sessions.has(channelId)) throw new Error('มี session การแข่งที่เปิดอยู่แล้ว');
 
   const structure = getPhaseStructure(distance);
@@ -107,6 +110,9 @@ async function openSession(channelId, track = 'ไม่ระบุ', grade = '
     isFirstTurn: true,
     players:      new Map(),
     turnSnapshot: new Map(),
+    // ระบบสกิล: ปิดไว้ = ทำงานเหมือนเดิมทุกอย่าง (ตาราง v3.4 ล้วน)
+    skillsEnabled: !!options.skills,
+    skillsVersion: options.skills ? SKILLS_VERSION : null,
   });
 
   await persistSession(channelId);
@@ -125,6 +131,7 @@ function registerPlayer(channelId, userId, displayName, position, options = {}) 
     const existing = session.players.get(userId);
     existing.position   = position;
     existing.hillCleared = options.hillCleared || false;
+    if (session.skillsEnabled) existing.passiveReset = skillSystem.onClassChanged(existing);
     persistSession(channelId).catch(err => console.error('[registerPlayer] persist failed:', err));
     return existing;
   }
@@ -147,6 +154,7 @@ function registerPlayer(channelId, userId, displayName, position, options = {}) 
     hillCleared:   options.hillCleared  || false,
     zoneEnabled:   options.zoneEnabled  || false,
     debutSafeCount: isDebut ? 3 : 0,  // Main Safe — เฉพาะ Debut 3 ครั้ง
+    ...(session.skillsEnabled ? { skills: skillSystem.defaultSkills() } : {}),
   });
   session.turnSnapshot.set(userId, 0);
 
@@ -218,19 +226,39 @@ function useRedSkill(channelId, userId, rollFn, randomFn = Math.random) {
   if (user.redSkillUsed) throw new Error('ใช้สกิลแดงไปแล้วในการแข่งนี้ (Skill Already Used)');
 
   // เป้าหมายที่เป็นไปได้: คู่แข่งที่ทอยแล้วเทิร์นนี้ มีผลทอยล่าสุด และไม่ได้ใช้ Zone เทิร์นนี้
+  const skills = skillSystem.skillsOn(session);
   const targets = [...session.players.values()].filter(p =>
     p.userId !== userId &&
     p.rolled &&
     getLastRoll(channelId, p.userId) &&
-    p.zoneUsedTurn !== session.totalTurn
+    p.zoneUsedTurn !== session.totalTurn &&
+    // ระบบสกิล: ม้าหนึ่งตัวโดนโจมตีได้ไม่เกิน 1 ครั้งต่อเทิร์น (รวมสกิลแดง)
+    !(skills && skillSystem.attackedThisTurn(session, p))
   );
   if (targets.length === 0) throw new Error('ยังไม่มีคู่แข่งที่ทอยในเทิร์นนี้ให้เป็นเป้าหมาย (No Valid Target)');
 
   const target   = targets[Math.floor(randomFn() * targets.length)];
   const last     = getLastRoll(channelId, target.userId);
+  const base     = session.turnSnapshot.get(target.userId) ?? 0;
+
+  if (skills) {
+    user.redSkillUsed = true;
+    if (skillSystem.receiveAttack(session, target)) {
+      // 🛡️ Iron Halo — สกิลแดงถูกยกเลิก แต้มเป้าหมายไม่เปลี่ยน
+      persistSession(channelId).catch(err => console.error('[useRedSkill] persist failed:', err));
+      return { target, blocked: true, oldRoll: last, base: RED_SKILL_BASE };
+    }
+    // ทอยใหม่ทั้งเทิร์นด้วยเงื่อนไขเดิม (สกิลที่ใช้ไปแล้วยังมีผล) แล้วหัก 20 เป็นขั้นสุดท้าย
+    const newRoll = resolveTurn(channelId, target.userId, rollFn, { redSkill: true });
+    target.score    = base + newRoll.total;
+    target.debuffed = true;
+    lastRolls.set(`${channelId}:${target.userId}`, { ...newRoll });
+    persistSession(channelId).catch(err => console.error('[useRedSkill] persist failed:', err));
+    return { target, oldRoll: last, newRoll, turnScore: newRoll.total, base: RED_SKILL_BASE };
+  }
+
   const newRoll  = rollFn(last.notation);
   const turnScore = Math.max(newRoll.total - RED_SKILL_BASE, 0);
-  const base     = session.turnSnapshot.get(target.userId) ?? 0;
 
   target.score    = base + turnScore;
   target.debuffed = true;
@@ -296,7 +324,9 @@ function trainerReroll(channelId, targetUserId, rollFn) {
   const last = getLastRoll(channelId, targetUserId);
   if (!last) throw new Error('ยังไม่มีผลสุ่มของผู้เล่นคนนี้');
 
-  const newResult = rollFn(last.notation);
+  const newResult = skillSystem.skillsOn(session)
+    ? resolveTurn(channelId, targetUserId, rollFn)
+    : rollFn(last.notation);
 
   // ใช้ snapshot ต้นเทิร์นเป็น base เหมือน submitScore replace
   const base = session.turnSnapshot.get(targetUserId) ?? 0;
@@ -314,6 +344,9 @@ function trainerReroll(channelId, targetUserId, rollFn) {
 async function next(channelId) {
   const session = getSession(channelId);
   if (session.status !== 'racing') throw new Error('การแข่งยังไม่เริ่ม');
+
+  // ระบบสกิล: บันทึก Gathering Storm + ล้างผลค้างที่หมดอายุ (ต้องทำก่อนล้าง rolled)
+  skillSystem.commitTurn(session);
 
   for (const p of session.players.values()) {
     p.rolled          = false;
@@ -343,6 +376,62 @@ async function next(channelId) {
 
   const type = session.phase !== prevPhase ? 'phase' : 'turn';
   return { type, phase: session.phase, turn: session.turn, totalTurn: session.totalTurn };
+}
+
+// =================== ระบบสกิล ===================
+
+/** แผนของเทิร์นนี้ (สูตรที่ต้องทอย + สกิลที่มีผล) — null ถ้าการแข่งไม่ได้เปิดสกิล */
+function getTurnPlan(channelId, userId) {
+  const session = getSession(channelId);
+  if (!skillSystem.skillsOn(session)) return null;
+  const player = session.players.get(userId);
+  if (!player) return null;
+  skillSystem.ensureSkills(player);
+  return skillEngine.buildPlan(session, player);
+}
+
+/**
+ * ทอยทั้งเทิร์นตามแผน (ใช้ทั้งทอยปกติ, Reroll, Safe, All Out, Trainer Reroll, สกิลแดง)
+ * flags.redSkill = หัก 20 เป็นขั้นสุดท้าย
+ */
+function resolveTurn(channelId, userId, rollFn, flags = {}) {
+  const plan = getTurnPlan(channelId, userId);
+  if (!plan) throw new Error('การแข่งนี้ไม่ได้เปิดระบบสกิล');
+  return skillEngine.resolve(plan, rollFn, flags);
+}
+
+/**
+ * ใช้ไพ่ตาย — ไพ่ที่ใช้หลังทอย (Damage Control / Hail Mary) คิดแต้มเทิร์นใหม่ทันที
+ * @returns { ...useActive result, rescored? }
+ */
+function applyActive(channelId, userId, opts, rollFn) {
+  const session = getSession(channelId);
+  const player  = session.players.get(userId);
+  if (!player) throw new Error('คุณยังไม่ได้ลงทะเบียนแข่ง');
+  let last = null;
+  if (skillSystem.skillsOn(session) && player.skills && player.skills.active) {
+    const def = require('../skills/skillData').ACTIVES[player.skills.active];
+    if (def && def.timing === 'post' && player.rolled) {
+      last = getLastRoll(channelId, userId);
+      if (!last || !last.sets || last.skillTurn !== session.totalTurn) {
+        throw new Error('ไม่พบผลทอยของเทิร์นนี้ (ถ้าบอทเพิ่งรีสตาร์ต ให้ทอยใหม่ด้วย /race redo ก่อน)');
+      }
+    }
+  }
+  const res = skillSystem.useActive(session, player, opts);
+
+  if (res.kind === 'post') {
+    const plan = skillEngine.buildPlan(session, player);
+    const sets = { ...last.sets };
+    if (plan.hailMary && !sets.extra) sets.extra = rollFn(plan.notation);
+    const newResult = skillEngine.packResult(plan, sets, { redSkill: !!last.redSkilled });
+    const base = session.turnSnapshot.get(userId) ?? 0;
+    player.score = base + newResult.total;
+    lastRolls.set(`${channelId}:${userId}`, { ...newResult });
+    res.rescored = { oldTotal: last.total, newResult, score: player.score };
+  }
+  persistSession(channelId).catch(err => console.error('[applyActive] persist failed:', err));
+  return res;
 }
 
 function getSession(channelId) {
@@ -383,6 +472,7 @@ module.exports = {
   adjustScore,
   getSessionRerolls, useSessionReroll,
   useRedSkill, RED_SKILL_BASE,
+  getTurnPlan, resolveTurn, applyActive,
   submitScore,
   getLastRoll, trainerReroll,
   getTurnSnapshot,

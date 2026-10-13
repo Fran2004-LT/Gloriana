@@ -10,8 +10,16 @@ const {
   openSession, registerPlayer, adjustScore,
   submitScore,
   next, getSession, hasSession, closeSession, getLeaderboard,
-  getTurnSnapshot,
+  getTurnSnapshot, getTurnPlan, resolveTurn,
 } = require('../race/raceSession');
+const { publicMarker, revealSummary } = require('../skills/skillSystem');
+
+/** embed เปิดเผยสกิลของทุกคนตอนจบการแข่ง (null ถ้าไม่ได้เปิดระบบสกิล) */
+function buildRevealEmbed(session) {
+  const text = revealSummary(session);
+  if (!text) return null;
+  return new EmbedBuilder().setColor(0x9B59B6).setTitle('🃏 เปิดเผยสกิลของทุกคน').setDescription(text.slice(0, 4000));
+}
 
 // ============================
 // Leaderboard embed helper
@@ -26,7 +34,8 @@ function buildLeaderboardEmbed(session, lb, title, closed = false) {
     const zone  = p.zoneUsed    ? ' 🌀' : '';
     const hill  = p.hillCleared ? ' ✅' : '';
     const deb   = p.debuffed    ? ' 🔴' : '';
-    return `${medal} **${p.displayName}** [${p.position}${zone}${hill}${deb}] — **${p.score.toLocaleString()}** แต้ม`;
+    const card  = session.skillsEnabled ? publicMarker(p) : '';
+    return `${medal} **${p.displayName}** [${p.position}${zone}${hill}${deb}${card}] — **${p.score.toLocaleString()}** แต้ม`;
   }).join('\n') || 'ยังไม่มีผู้เล่น';
 
   const embed = new EmbedBuilder()
@@ -66,12 +75,14 @@ async function handleRace(interaction) {
       const track    = interaction.options.getString('track');
       const grade    = interaction.options.getString('grade');
       const distance = interaction.options.getInteger('distance');
+      const skills   = interaction.options.getBoolean('skills') || false;
       const distNames = { 8: 'Sprint', 12: 'Mile/Medium', 14: 'Long' };
-      await openSession(channelId, track, grade, distance);
+      await openSession(channelId, track, grade, distance, { skills });
       await interaction.reply(
         `🏇 **เปิด Session การแข่งแล้ว!**\n` +
-        `🏟️ ${track} | ${grade} | ${distNames[distance]} (${distance} เทิร์น)\n\n` +
-        `ใช้ \`/race register\` เพื่อลงทะเบียน — ลงทะเบียนแล้วทอยได้เลย!` +
+        `🏟️ ${track} | ${grade} | ${distNames[distance]} (${distance} เทิร์น)\n` +
+        (skills ? `🃏 **เปิดระบบสกิล** — ลงทะเบียนแล้วเลือกสกิลด้วย \`/skill pick\` ก่อนทอยครั้งแรก\n` : '') +
+        `\nใช้ \`/race register\` เพื่อลงทะเบียน — ลงทะเบียนแล้วทอยได้เลย!` +
         (grade === 'Debut' ? `\n🛡️ Debut: ทุกคนได้ Race Safe 3 อัน` : '')
       );
     }
@@ -105,6 +116,11 @@ async function handleRace(interaction) {
 
       // Debut ใช้ debutSafeCount ใน session แล้ว ไม่ต้องเพิ่ม raceSafe ใน inventory
 
+      if (session.skillsEnabled) {
+        if (player.passiveReset) statusMsgs.push('⚠️ เปลี่ยนคลาสแล้ว passive เดิมใช้ไม่ได้ — เลือกใหม่ด้วย `/skill pick`');
+        else if (!player.skills?.passive && !player.skills?.active) statusMsgs.push('🃏 เลือกสกิลด้วย `/skill pick` ก่อนทอยครั้งแรก (ไม่มีใครเห็นว่าคุณเลือกอะไร)');
+        delete player.passiveReset;
+      }
       const extra = statusMsgs.length ? `\n${statusMsgs.join('\n')}` : '';
       await interaction.reply(
         `✅ **${player.displayName}** ลงทะเบียนสาย **${player.position}** แล้ว!\n` +
@@ -138,8 +154,13 @@ async function handleRace(interaction) {
       const hill = player.hillCleared ? 0 : getHillDebuff(session.track, player.position, session.phase);
       if (hill > 0) notation = notation + '-' + hill;
 
-      const r1   = roll(notation);
-      const r2   = roll(notation);
+      // จำเทิร์นที่ใช้ zone ก่อนทอย — ระบบสกิลใช้สูตรของโซนที่เลือกทั้งเทิร์น
+      player.zoneUsedTurn = getSession(channelId).totalTurn;
+      player.zoneType     = isGold ? 'gold' : 'white';
+      const plan = getTurnPlan(channelId, interaction.user.id);
+      if (plan) notation = plan.notation;
+      const r1   = plan ? resolveTurn(channelId, interaction.user.id, roll) : roll(notation);
+      const r2   = plan ? resolveTurn(channelId, interaction.user.id, roll) : roll(notation);
       const best  = r1.total >= r2.total ? r1 : r2;
       const worst = r1.total <  r2.total ? r1 : r2;
 
@@ -154,7 +175,8 @@ async function handleRace(interaction) {
         `🌀 **${name}** ใช้ **Zone** (${isGold ? '🟡 Gold' : '⚪ White'}) ด้วย \`${notation}\`\n` +
         `> ทอย 1: ${r1.display} → **${r1.total}**\n` +
         `> ทอย 2: ${r2.display} → **${r2.total}**\n` +
-        `> เลือก: **${best.total}** ~~${worst.total}~~\n\n` +
+        `> เลือก: **${best.total}** ~~${worst.total}~~\n` +
+        (best.skillLines && best.skillLines.length ? `✨ ${best.skillLines.join('\n✨ ')}\n` : '') + `\n` +
         `📊 คะแนนสะสม: **${updated.score}**`
       );
     }
@@ -167,8 +189,9 @@ async function handleRace(interaction) {
         const lb      = getLeaderboard(channelId);
         const session = getSession(channelId);
         if (lb.length > 0) await recordWin(lb[0].userId, session.grade);
-        const embed = buildLeaderboardEmbed(session, lb, '🏁 การแข่งจบแล้ว!', true);
-        await interaction.reply({ embeds: [embed] });
+        const embed  = buildLeaderboardEmbed(session, lb, '🏁 การแข่งจบแล้ว!', true);
+        const reveal = buildRevealEmbed(session);
+        await interaction.reply({ embeds: reveal ? [embed, reveal] : [embed] });
       } else {
         const session = getSession(channelId);
         const prefix  = result.type === 'phase' ? `🔄 **จบเฟส ${result.phase - 1}!**\n\n` : `⏭️ **จบเทิร์น!**\n`;
@@ -199,9 +222,10 @@ async function handleRace(interaction) {
         for (const uid of s.players.keys()) {
           await resetTrainingItems(uid).catch(e => console.error('[resetTrainingItems]', e));
         }
-        const embed = buildLeaderboardEmbed(s, lb, '🔒 ปิด Session — ผลการแข่งสุดท้าย', true);
+        const embed  = buildLeaderboardEmbed(s, lb, '🔒 ปิด Session — ผลการแข่งสุดท้าย', true);
+        const reveal = buildRevealEmbed(s);
         await closeSession(channelId);
-        await interaction.reply({ embeds: [embed] });
+        await interaction.reply({ embeds: reveal ? [embed, reveal] : [embed] });
       } catch {
         await closeSession(channelId).catch(() => {});
         await interaction.reply('🔒 ปิด Session แล้ว');
@@ -225,7 +249,9 @@ async function handleRace(interaction) {
       const mySnapshot = { ...updated, score: myScore };
       const hill       = updated.hillCleared ? 0 : getHillDebuff(session.track, updated.position, session.phase);
       const forceWhite = session.isFirstTurn === true;
-      const { notation, isGold } = getPlayerNotation(mySnapshot, session.phase, allScores, { hillDebuff: hill, forceWhite });
+      let { notation, isGold } = getPlayerNotation(mySnapshot, session.phase, allScores, { hillDebuff: hill, forceWhite });
+      const plan = getTurnPlan(channelId, interaction.user.id);
+      if (plan) { notation = plan.notation; isGold = plan.zone === 'gold'; }
 
       await interaction.reply(
         `🐢 **${interaction.member?.displayName || interaction.user.username}** ลดแต้ม -${amount}\n` +
