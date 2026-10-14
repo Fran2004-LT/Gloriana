@@ -80,11 +80,21 @@ async function persistSession(channelId) {
  * โหลด sessions ทั้งหมดจาก DB กลับมาใส่ memory
  * เรียกครั้งเดียวตอน bot start (จาก initDB flow)
  */
+const STALE_SESSION_MS = 3 * 24 * 60 * 60 * 1000; // 3 วัน
+
 async function restoreSessionsFromDB() {
   try {
     const all = await loadAllSessionsDB();
     let count = 0;
     for (const [channelId, session] of Object.entries(all)) {
+      // เก็บกวาดสนามผี: จบแล้วแต่ไม่ได้ปิด หรือไม่มีใครแตะเกิน 3 วัน → ลบออกจาก DB
+      const ageMs = session.lastSavedAt ? Date.now() - session.lastSavedAt.getTime() : 0;
+      if (session.status === 'finished' || ageMs > STALE_SESSION_MS) {
+        await deleteSessionDB(channelId).catch(err => console.error('[restore] delete ghost failed:', err));
+        console.log(`🧹 ลบสนามค้าง ช่อง ${channelId} · ${session.track} ${session.grade} · ` +
+          (session.status === 'finished' ? 'จบแล้วแต่ไม่ได้ปิด' : `ไม่มีใครแตะ ${Math.floor(ageMs / 86400000)} วัน`));
+        continue;
+      }
       sessions.set(channelId, session);
       count++;
       // บอกว่าสนามค้างอยู่ช่องไหน — ใช้ตามหาสนามผีแล้ว /race close ช่องนั้น

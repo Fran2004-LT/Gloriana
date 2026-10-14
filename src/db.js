@@ -217,10 +217,13 @@ async function loadSessionDB(guildId) {
  * โหลด active sessions ทั้งหมด (ใช้ตอน bot start)
  */
 async function loadAllSessionsDB() {
-  const res = await pool.query('SELECT guild_id, data FROM race_sessions');
+  const res = await pool.query('SELECT guild_id, data, updated_at FROM race_sessions');
   const out = {};
   for (const row of res.rows) {
-    out[row.guild_id] = deserializeSession(row.data);
+    const session = deserializeSession(row.data);
+    // เวลาที่บันทึกล่าสุด — ใช้เก็บกวาดสนามผี (ไม่ถูกบันทึกกลับลง DB เพราะ saveSessionDB ไม่ได้ใช้ field นี้)
+    Object.defineProperty(session, 'lastSavedAt', { value: row.updated_at ? new Date(row.updated_at) : null, enumerable: false });
+    out[row.guild_id] = session;
   }
   return out;
 }
