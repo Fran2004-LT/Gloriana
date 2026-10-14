@@ -456,12 +456,13 @@ async function handleAllOut(interaction) {
     const n       = player.allOutCount;
     const penalty = n * 10;
 
-    // หัก penalty จากคะแนนสะสมก่อน แล้วบวกผลทอยใหม่เข้า
     const snapshot  = session.turnSnapshot.get(userId) ?? 0;
     const newResult = rollForTurn(channelId, userId, last.notation);
     player.allOutTurn = session.totalTurn;
     const scoreBeforeThisTurn = snapshot; // คะแนนก่อนเทิร์นนี้
-    player.score = Math.max(0, scoreBeforeThisTurn - penalty) + newResult.total;
+    // หัก penalty จากคะแนนรวมหลังทอยใหม่ (เดิมหักจากคะแนนต้นเทิร์นก่อน แล้วกันติดลบ
+    // → คะแนนต้นเทิร์นน้อยกว่า penalty เช่นเทิร์นแรก 0 แต้ม จะไม่โดนหักเลย)
+    player.score = Math.max(0, scoreBeforeThisTurn + newResult.total - penalty);
     const newTotal = player.score - scoreBeforeThisTurn;
 
     setLastRoll(channelId, userId, newResult);
